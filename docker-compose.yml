@@ -1,0 +1,9 @@
+services:
+  report-bot:
+    build: .
+    container_name: report-bot
+    restart: unless-stopped
+    volumes:
+      # mount rw để lệnh /cauhinh set lưu được thay đổi vào config.yaml
+      - ./config.yaml:/app/config.yaml
+      - ./credentials.json:/app/credentials.json:ro

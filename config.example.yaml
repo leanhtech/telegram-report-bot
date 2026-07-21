@@ -1,0 +1,57 @@
+# Mẫu cấu hình. Copy thành config.yaml rồi điền giá trị thật.
+#   Windows:  copy config.example.yaml config.yaml
+#   Linux/Mac: cp config.example.yaml config.yaml
+# config.yaml và credentials.json KHÔNG được commit (đã có trong .gitignore).
+
+telegram:
+  bot_token: "PUT-YOUR-BOT-TOKEN-HERE"      # lấy từ @BotFather
+  admin_ids:
+  - 123456789                                # user_id được phép dùng /cauhinh (@userinfobot)
+
+google_sheets:
+  spreadsheet_id: "PUT-YOUR-SPREADSHEET-ID-HERE"   # đoạn giữa /d/ và /edit trên URL sheet
+  worksheet_name: Task Đã Điều Phối
+  credentials_file: credentials.json         # key service account (tự tạo, không commit)
+
+timezone: Asia/Ho_Chi_Minh
+
+# LƯU Ý ngày trong tuần: python-telegram-bot >= 20 dùng 0=Chủ Nhật ... 6=Thứ Bảy.
+# => [1, 2, 3, 4, 5] = Thứ Hai -> Thứ Sáu; [5] = Thứ Sáu.
+schedules:
+  team_report:
+    enabled: true
+    time: '16:20'
+    days: [1, 2, 3, 4, 5]
+    chat_id: -1000000000000                  # chat_id nhóm (dùng /chatid để lấy)
+    topic_id: 0                              # topic_id nếu nhóm có topic
+    kiosk_chat_id: -1000000000000            # (tùy chọn) gửi riêng báo cáo Kiosk
+    kiosk_topic_id: 0
+  personal_report:
+    enabled: true
+    time: '16:00'
+    days: [1, 2, 3, 4, 5]
+    chat_id: 123456789                        # gửi về chat riêng của quản lý
+  deadline_alert:
+    enabled: true
+    time: '13:28'
+    days: [1, 2, 3, 4, 5]
+    chat_id: 123456789
+  weekly_summary:
+    enabled: true
+    time: '16:25'
+    days: [5]                                # Thứ Sáu
+    chat_id: -1000000000000
+    topic_id: 0
+
+report:
+  kiosk_project_name: Kiosk
+  kiosk_report_title: Báo cáo nội dung thực hiện OS Kiosk
+  other_report_title: Báo cáo nội dung thực hiện các dự án
+  strip_bracket_prefixes: true
+  cache_seconds: 120
+  daily_capacity_hours: 8                     # mức chuẩn giờ/người/ngày cho /tai
+
+team:
+  # Fallback cho /tai khi không đọc được dropdown cột 'Nhân Sự Thực Hiện'.
+  # Điền qua Telegram: /cauhinh set team.members Tên A, Tên B, Tên C
+  members: []

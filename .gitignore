@@ -1,0 +1,18 @@
+# Secrets — KHÔNG commit
+# config.yaml chứa bot_token, spreadsheet_id (dùng config.example.yaml làm mẫu)
+config.yaml
+# credentials.json là key service account Google
+credentials.json
+.env
+
+# Cấu hình agent/IDE cục bộ
+.claude/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Tạm
+*.log

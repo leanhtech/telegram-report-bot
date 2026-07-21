@@ -1,0 +1,78 @@
+# MEMORY.md — Bộ nhớ dự án
+
+Ghi lại **quyết định, bối cảnh và bẫy** không nhìn thấy được từ code, để AI/agent
+(và người) nắm nhanh "tại sao". Tra cứu "cái gì / như thế nào" ở [AGENTS.md](AGENTS.md).
+
+_Cập nhật gần nhất: 2026-07-21._
+
+## Hiện trạng (2026-07-21)
+
+- Bot đang hoạt động, triển khai bằng Docker (`restart: unless-stopped`).
+- Lịch gửi (giờ VN, đã đúng T2–T6 sau khi sửa lỗi ngày):
+  - `team_report` 16:20, T2–T6 · `personal_report` 16:00 · `deadline_alert` 13:28 ·
+    `weekly_summary` 16:25 **Thứ 6**.
+- `team.members` đã được điền qua Telegram (8 người) vì **đọc dropdown nhân sự đang
+  fail ở runtime** → hiện `/tai` dùng fallback từ config. Việc đọc dropdown tự động chưa
+  xác nhận chạy được (chưa có log lỗi cụ thể để chỉnh).
+
+## Quyết định & lý do (nhật ký thay đổi)
+
+1. **Sửa lỗi lịch "Thứ 5 không gửi".** Nguyên nhân: `python-telegram-bot` ≥ 20 đổi map
+   ngày sang `0=Chủ Nhật`. Config cũ `[0,1,2,3,4]` bị hiểu thành CN–T5 (thừa CN, thiếu
+   T6). → Đổi tất cả lịch ngày thành `[1,2,3,4,5]` (T2–T6), `weekly_summary` → `[5]` (T6).
+   **Vì sao nhớ:** đây là bẫy dễ tái diễn mỗi khi chỉnh `days`.
+
+2. **Dọn code thừa.** Bỏ import `ParseMode` không dùng (sau này thêm lại khi cần HTML),
+   khóa `weekly_summary.topic` thừa (code chỉ đọc `topic_id`), trường `Task.raw` (dựng
+   mỗi dòng, không ai đọc). Giữ `task_type/est/stt` vì map cột thật + rẻ.
+
+3. **Báo cáo "các dự án" gom theo từng dự án.** Trước đây gộp phẳng nhiều dự án → rối.
+   Nay nhóm theo `📁 Tên dự án:`, "(Chưa phân loại dự án)" xuống cuối. Kiosk vẫn phẳng
+   (một dự án).
+
+4. **Phần "Dự kiến" chỉ còn việc cần làm tiếp, không gồm việc đang làm dở chung chung.**
+   - Ban đầu: bỏ task "Đang thực hiện" khỏi Dự kiến, chỉ giữ "dự tính giao" (task mới,
+     chưa có nhân sự/ngày/hạn). Cũng gỡ tiền tố "Tiếp tục" (khi đó vô nghĩa).
+   - Sau đó bổ sung lại: task **đang thực hiện có `due >= ngày dự kiến`** cũng vào Dự kiến
+     và **gắn lại "Tiếp tục..."** cho riêng nhóm này (dựa `not is_planned`, chính xác hơn
+     cách cũ là dò trùng tên). Task dự tính giao giữ tên trơn.
+   **Vì sao nhớ:** logic `planned_for` / "Tiếp tục" đã đổi 3 lần — đây là bản chốt.
+
+5. **In đậm + emoji cho 2 đầu mục báo cáo team.** Telegram cần `parse_mode` để bold →
+   chuyển báo cáo team sang **HTML** (`<b>` + `📋`/`🗓️`), escape nội dung động (`_esc`).
+   Thêm tham số `parse_mode` cho `send_long`; các báo cáo khác vẫn plain text.
+   **Hệ quả cần nhớ:** thêm chỗ gửi báo cáo team/workload phải truyền `ParseMode.HTML`.
+
+6. **Lệnh `/tai` — tải công việc theo nhân sự.** Mục đích: thấy ai nhẹ tải (giao thêm) /
+   ai quá tải. Phân loại task chưa xong theo hạn + ước tính giờ hôm nay (EST chia đều
+   trên ngày làm việc của task) + nhãn tải so `daily_capacity_hours`. Mỗi chỉ số một dòng
+   cho dễ nhìn. Thêm mục "🆓 Chưa được giao task" từ roster.
+   **Logic tự đề xuất (có thể chỉnh):** task quá hạn vẫn tính 1 suất giờ/ngày; T7/CN = 0h;
+   chỉ trừ T7/CN, chưa trừ ngày lễ.
+
+7. **Nguồn danh sách nhân sự = dropdown cột "Nhân Sự Thực Hiện".** Đọc data validation
+   (`ONE_OF_LIST`/`ONE_OF_RANGE`) qua `fetch_sheet_metadata`, bọc `try/except`, fallback
+   `config team.members`. Cache 5× `cache_seconds`.
+
+8. **`/cauhinh set` hỗ trợ danh sách.** Để điền `team.members` từ Telegram khi dropdown
+   fail. `_parse_value(raw, key)` nhận list khi khóa ∈ `LIST_KEYS`, có dấu phẩy, hoặc
+   bọc `[ ]`; `null` → `[]`. Chỉ `schedules.*` mới nạp lại lịch; `team.members` nạp lại roster.
+
+## Bẫy đã biết (đừng vấp lại)
+
+- **Ngày PTB `0=Chủ Nhật`** (mục 1). Dùng `[1..5]` = T2–T6.
+- **Báo cáo team & `/tai` là HTML** → cần `parse_mode=ParseMode.HTML` + escape (mục 5).
+- **`config.yaml` mất comment** sau `/cauhinh set` (`yaml.safe_dump`).
+- **`.claude/launch.json` trỏ dự án khác** (kiosk-dvc/uvicorn) — không liên quan.
+- **`README.md` mục "Logic sinh báo cáo" đã cũ** — tin theo AGENTS.md.
+- Máy dev **không cài** gspread/pytz/telegram → test bằng stub module + monkeypatch.
+
+## Việc mở / đề xuất tiếp theo
+
+- **Xác nhận đọc dropdown nhân sự tự động** (cần log lỗi runtime `Không đọc được dropdown
+  nhân sự: ...` để chỉnh cho khớp cấu hình sheet thật). Khi chạy được thì `team.members`
+  chỉ còn là fallback.
+- Cập nhật lại `README.md` mục 5 cho khớp logic hiện tại (chưa làm — ngoài phạm vi yêu cầu).
+- Tùy chọn: trừ **ngày lễ** khi tính giờ `/tai`; liệt kê tên task dưới mỗi người trong `/tai`.
+- Chưa có test tự động — cân nhắc thêm pytest cho `report_generator`/`sheets_client`
+  (thuần logic, dễ test với dữ liệu giả).
