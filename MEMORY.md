@@ -47,8 +47,13 @@ _Cập nhật gần nhất: 2026-07-21._
    ai quá tải. Phân loại task chưa xong theo hạn + ước tính giờ hôm nay (EST chia đều
    trên ngày làm việc của task) + nhãn tải so `daily_capacity_hours`. Mỗi chỉ số một dòng
    cho dễ nhìn. Thêm mục "🆓 Chưa được giao task" từ roster.
-   **Logic tự đề xuất (có thể chỉnh):** task quá hạn vẫn tính 1 suất giờ/ngày; T7/CN = 0h;
-   chỉ trừ T7/CN, chưa trừ ngày lễ.
+   **Logic giờ hôm nay — bản 2 (xếp lịch theo sức chứa).** Ban đầu chia đều EST theo số
+   ngày làm việc của task (`_est_hours_today`). Vấn đề: nếu một ngày trong khoảng đã đầy
+   (≥ capacity vì task khác) thì không thể chia đều — giờ phải dồn sang ngày trống. Đã đổi
+   sang `_person_hours_today`: xếp lịch từng người theo **EDF + water-filling** (lấp ngày
+   tải thấp trước, trần `daily_capacity_hours`/ngày), ngày đầy thì tràn sang ngày trống;
+   trả về tải hôm nay. Quá hạn → dồn hôm nay; không hạn → rải ~capacity/ngày; T7/CN = 0h.
+   **Chưa** trừ ngày lễ (chỉ T7/CN).
 
 7. **Nguồn danh sách nhân sự = dropdown cột "Nhân Sự Thực Hiện".** Đọc data validation
    (`ONE_OF_LIST`/`ONE_OF_RANGE`) qua `fetch_sheet_metadata`, bọc `try/except`, fallback

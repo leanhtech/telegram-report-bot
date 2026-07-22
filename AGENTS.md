@@ -125,9 +125,13 @@ tự chèn động từ nếu tên chưa có (dựa `LEADING_VERBS`/`VERB_HINTS`
 - **`build_workload_report(today)` (lệnh `/tai`)** — tải công việc theo nhân sự (HTML):
   - Với mỗi người có task chưa xong: đếm `tồn từ trước` (due<today) / `đến hạn hôm nay` /
     `chưa đến hạn` (due>today) / `không hạn`; ước tính **giờ hôm nay**; gắn nhãn tải.
-  - `_est_hours_today`: EST chia đều trên số **ngày làm việc (T2–T6)** trong `[created(or
-    today) → due(or start)]`. Chưa tới ngày bắt đầu → 0; T7/CN → 0; quá hạn chưa xong →
-    vẫn tính 1 suất/ngày.
+  - `_person_hours_today` (xếp lịch theo **sức chứa/ngày**, không chia đều máy móc):
+    mỗi task rải EST vào các ngày làm việc trong hạn, ưu tiên **hạn sớm (EDF)** và **lấp
+    ngày còn trống trước** (water-filling qua `_water_fill`), trần `daily_capacity_hours`
+    giờ/ngày. Nhờ đó task dài ngày có ngày đã kín (vì task khác) sẽ **dồn giờ sang ngày
+    trống** thay vì chia đều lên hôm nay. Quá hạn → dồn hôm nay; không hạn → rải
+    ~capacity giờ/ngày (cửa sổ `ceil(EST/capacity)` ngày); T7/CN hoặc chưa tới ngày bắt
+    đầu → 0. Trả về tải của **hôm nay** (index 0).
   - Nhãn so với `report.daily_capacity_hours` (mặc định 8h): 🟢 trống/nhẹ · 🟡 vừa · 🔴 quá tải.
   - Sắp quá tải lên đầu; thêm mục **"🆓 Chưa được giao task"** = `fetch_team_members()` trừ
     những người đang có task mở.

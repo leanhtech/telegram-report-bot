@@ -8,6 +8,7 @@ Quy tắc làm sạch tên task:
 - Nếu tên task chưa bắt đầu bằng động từ thì chèn động từ phù hợp
   (Xử lý / Kiểm tra / Thực hiện / Tìm hiểu / Hỗ trợ / Tổng hợp / Báo cáo ...)
 """
+import math
 import re
 from collections import defaultdict
 from datetime import date, timedelta
@@ -323,23 +324,75 @@ def _workdays_between(start: date, end: date) -> int:
     return max(n, 1)
 
 
-def _est_hours_today(t: Task, today: date) -> float:
-    """Giờ EST phân bổ cho hôm nay: chia đều EST trên các ngày làm việc của task.
+def _water_fill(load: List[float], days: List[int], est: float, cap: float) -> None:
+    """Rải `est` giờ vào các ngày `days`, lấp ngày đang tải thấp trước, trần `cap`/ngày.
 
-    - Bắt đầu = ngày tạo (trống -> hôm nay); Kết thúc = hạn (trống -> = bắt đầu).
-    - Task chưa tới ngày bắt đầu -> 0. Task quá hạn chưa xong -> vẫn tính 1 suất/ngày.
-    - Hôm nay là T7/CN -> 0 (không kỳ vọng làm).
+    Nhờ vậy, giờ của một task KHÔNG bị chia đều một cách máy móc: ngày nào đã (gần)
+    đầy vì task khác thì phần giờ tự tràn sang ngày còn trống. Khi mọi ngày trong cửa
+    sổ đều chạm trần mà vẫn dư -> chia đều phần dư (quá tải thực sự) cho các ngày.
     """
-    est = _parse_hours(t.est)
-    if est <= 0 or today.weekday() >= 5:
+    EPS = 1e-9
+    remaining = est
+    while remaining > EPS:
+        avail = [d for d in days if load[d] < cap - EPS]
+        if not avail:  # hết chỗ trống -> quá tải, chia đều phần dư
+            share = remaining / len(days)
+            for d in days:
+                load[d] += share
+            return
+        base = min(load[d] for d in avail)
+        higher = [load[d] for d in avail if load[d] > base + EPS]
+        ceil_level = min(min(higher) if higher else cap, cap)
+        lowest = [d for d in avail if load[d] <= base + EPS]
+        step_total = (ceil_level - base) * len(lowest)
+        if step_total <= remaining - EPS:
+            for d in lowest:
+                load[d] = ceil_level
+            remaining -= step_total
+        else:  # phần còn lại không đủ nâng hết -> chia đều cho các ngày thấp nhất
+            add = remaining / len(lowest)
+            for d in lowest:
+                load[d] += add
+            return
+
+
+def _person_hours_today(tasks: List[Task], today: date, capacity: float) -> float:
+    """Giờ dự kiến HÔM NAY của một người, có xét sức chứa từng ngày.
+
+    Mỗi task rải EST vào các ngày làm việc trong hạn của nó, ưu tiên hạn sớm (EDF)
+    và lấp ngày còn trống trước (water-filling), trần `capacity` giờ/ngày. Nhờ đó
+    task dài ngày có ngày đã kín sẽ dồn giờ sang ngày trống thay vì chia đều.
+    - Task quá hạn chưa xong -> dồn vào hôm nay.
+    - Task không hạn -> rải đều ~capacity giờ/ngày (cửa sổ = ceil(EST/capacity) ngày).
+    - Hôm nay là T7/CN, hoặc task chưa tới ngày bắt đầu -> không tính.
+    """
+    if today.weekday() >= 5:
         return 0.0
-    start = t.created or today
-    end = t.due or start
-    if end < start:
-        end = start
-    if today < start:  # task chưa bắt đầu
+    cap = capacity if capacity > 0 else 8.0
+    entries = []  # (khóa_hạn, est, số_ngày_cửa_sổ)
+    for t in tasks:
+        est = _parse_hours(t.est)
+        if est <= 0:
+            continue
+        if t.created and t.created > today:  # chưa bắt đầu
+            continue
+        if t.due is None:
+            span = max(1, math.ceil(est / cap))
+            due_key = date.max
+        elif t.due < today:  # quá hạn -> dồn hôm nay
+            span, due_key = 1, t.due
+        else:
+            span, due_key = _workdays_between(today, t.due), t.due
+        entries.append((due_key, est, span))
+    if not entries:
         return 0.0
-    return est / _workdays_between(start, end)
+
+    entries.sort(key=lambda e: e[0])  # EDF: hạn sớm trước, không hạn (date.max) cuối
+    horizon = min(max(span for _, _, span in entries), 260)
+    load = [0.0] * horizon
+    for _, est, span in entries:
+        _water_fill(load, list(range(min(span, horizon))), est, cap)
+    return load[0]  # index 0 = hôm nay
 
 
 def _hnum(x: float) -> str:
@@ -380,7 +433,7 @@ def build_workload_report(today: date) -> str:
             "due_today": sum(1 for t in ts if t.due == today),
             "upcoming": sum(1 for t in ts if t.due and t.due > today),
             "no_due": sum(1 for t in ts if not t.due),
-            "hours": sum(_est_hours_today(t, today) for t in ts),
+            "hours": _person_hours_today(ts, today, capacity),
         }
 
     # Quá tải lên đầu (giờ giảm dần); nhóm chưa phân công xuống cuối.
