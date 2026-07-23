@@ -53,7 +53,14 @@ _Cập nhật gần nhất: 2026-07-21._
    sang `_person_hours_today`: xếp lịch từng người theo **EDF + water-filling** (lấp ngày
    tải thấp trước, trần `daily_capacity_hours`/ngày), ngày đầy thì tràn sang ngày trống;
    trả về tải hôm nay. Quá hạn → dồn hôm nay; không hạn → rải ~capacity/ngày; T7/CN = 0h.
-   **Chưa** trừ ngày lễ (chỉ T7/CN).
+
+   **Bản 3 — tính cả ngày đã qua.** Bản 2 chỉ xếp lịch từ hôm nay trở đi nên bỏ sót phần
+   task dài ngày đã làm ở những ngày trước. Nay **ngày đã qua "ăn" trước tối đa phần chỗ
+   trống hôm đó**, phần EST còn lại mới chia cho hôm nay + tương lai (VD task tạo T2 –
+   hạn T4 – EST 6h: T2 kín 8h → T3/T4 mỗi ngày 3h; T2 mới dùng 4h → còn 1h/ngày).
+   Hệ quả: `_person_hours_today` phải nhận **cả task đã hoàn thành** (mới biết ngày đã qua
+   bận bao nhiêu) → `build_workload_report` truyền `all_by_person`, còn phần đếm/phân loại
+   vẫn dùng task đang mở. **Chưa** trừ ngày lễ (chỉ T7/CN).
 
 7. **Nguồn danh sách nhân sự = dropdown cột "Nhân Sự Thực Hiện".** Đọc data validation
    (`ONE_OF_LIST`/`ONE_OF_RANGE`) qua `fetch_sheet_metadata`, bọc `try/except`, fallback

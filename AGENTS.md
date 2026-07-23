@@ -125,13 +125,18 @@ tự chèn động từ nếu tên chưa có (dựa `LEADING_VERBS`/`VERB_HINTS`
 - **`build_workload_report(today)` (lệnh `/tai`)** — tải công việc theo nhân sự (HTML):
   - Với mỗi người có task chưa xong: đếm `tồn từ trước` (due<today) / `đến hạn hôm nay` /
     `chưa đến hạn` (due>today) / `không hạn`; ước tính **giờ hôm nay**; gắn nhãn tải.
-  - `_person_hours_today` (xếp lịch theo **sức chứa/ngày**, không chia đều máy móc):
-    mỗi task rải EST vào các ngày làm việc trong hạn, ưu tiên **hạn sớm (EDF)** và **lấp
-    ngày còn trống trước** (water-filling qua `_water_fill`), trần `daily_capacity_hours`
-    giờ/ngày. Nhờ đó task dài ngày có ngày đã kín (vì task khác) sẽ **dồn giờ sang ngày
-    trống** thay vì chia đều lên hôm nay. Quá hạn → dồn hôm nay; không hạn → rải
-    ~capacity giờ/ngày (cửa sổ `ceil(EST/capacity)` ngày); T7/CN hoặc chưa tới ngày bắt
-    đầu → 0. Trả về tải của **hôm nay** (index 0).
+  - `_person_hours_today` (xếp lịch theo **sức chứa/ngày**, không chia đều máy móc).
+    Nhận **TẤT CẢ task của người đó, kể cả đã hoàn thành**, để dựng đúng mức bận của
+    những ngày đã qua. Mô phỏng trên lưới ngày làm việc, trần `daily_capacity_hours`/ngày:
+    - **Ngày đã qua** trong khoảng của task "ăn" trước tối đa phần chỗ trống hôm đó
+      (coi như đã làm); chỉ phần EST *còn lại* mới rải cho hôm nay + tương lai.
+      VD task tạo T2 – hạn T4 – EST 6h, chuẩn 8h/ngày: T2 kín 8h → T3 & T4 mỗi ngày 3h;
+      T2 mới dùng 4h → T2 ăn 4h, còn 2h → T3 & T4 mỗi ngày 1h.
+    - **Hôm nay + tương lai**: water-filling (`_water_fill`) — lấp ngày tải thấp trước,
+      ngày đã đầy thì tràn sang ngày trống.
+    - Thứ tự xử lý: task đã xong → task có hạn (EDF, hạn sớm trước) → task không hạn.
+    - Task đã hoàn thành chiếm chỗ `[ngày tạo .. ngày hoàn thành]`; quá hạn chưa xong →
+      dồn hôm nay; không hạn → rải ~capacity giờ/ngày; T7/CN hoặc chưa bắt đầu → 0.
   - Nhãn so với `report.daily_capacity_hours` (mặc định 8h): 🟢 trống/nhẹ · 🟡 vừa · 🔴 quá tải.
   - Sắp quá tải lên đầu; thêm mục **"🆓 Chưa được giao task"** = `fetch_team_members()` trừ
     những người đang có task mở.

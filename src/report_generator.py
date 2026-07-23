@@ -8,6 +8,7 @@ Quy tắc làm sạch tên task:
 - Nếu tên task chưa bắt đầu bằng động từ thì chèn động từ phù hợp
   (Xử lý / Kiểm tra / Thực hiện / Tìm hiểu / Hỗ trợ / Tổng hợp / Báo cáo ...)
 """
+import bisect
 import math
 import re
 from collections import defaultdict
@@ -356,43 +357,112 @@ def _water_fill(load: List[float], days: List[int], est: float, cap: float) -> N
             return
 
 
-def _person_hours_today(tasks: List[Task], today: date, capacity: float) -> float:
-    """Giờ dự kiến HÔM NAY của một người, có xét sức chứa từng ngày.
+_PAST_LOOKBACK_DAYS = 60      # giới hạn nhìn lại quá khứ khi dựng lưới ngày
+_FUTURE_LOOKAHEAD_DAYS = 365  # giới hạn nhìn tới tương lai
 
-    Mỗi task rải EST vào các ngày làm việc trong hạn của nó, ưu tiên hạn sớm (EDF)
-    và lấp ngày còn trống trước (water-filling), trần `capacity` giờ/ngày. Nhờ đó
-    task dài ngày có ngày đã kín sẽ dồn giờ sang ngày trống thay vì chia đều.
-    - Task quá hạn chưa xong -> dồn vào hôm nay.
-    - Task không hạn -> rải đều ~capacity giờ/ngày (cửa sổ = ceil(EST/capacity) ngày).
-    - Hôm nay là T7/CN, hoặc task chưa tới ngày bắt đầu -> không tính.
+
+def _workday_list(start: date, end: date) -> List[date]:
+    """Các ngày làm việc (T2–T6) trong [start, end]."""
+    out, d = [], start
+    while d <= end:
+        if d.weekday() < 5:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def _person_hours_today(tasks: List[Task], today: date, capacity: float) -> float:
+    """Giờ công việc rơi vào HÔM NAY của một người, mô phỏng theo sức chứa từng ngày.
+
+    `tasks` phải là TẤT CẢ task của người đó (kể cả đã hoàn thành) thì mới dựng đúng
+    mức bận của những ngày đã qua.
+
+    Nguyên tắc:
+    - **Ngày đã qua** trong khoảng của task dài ngày coi như đã được làm hết mức sức
+      chứa còn trống hôm đó; chỉ phần EST *còn lại* mới rải cho hôm nay + tương lai.
+      VD task tạo T2, hạn T4, EST 6h, chuẩn 8h/ngày — T2 đã kín 8h -> còn 6h chia đều
+      T3 & T4 (3h/ngày); T2 mới dùng 4h -> T2 "ăn" 4h, còn 2h chia T3 & T4 (1h/ngày).
+    - **Hôm nay + tương lai**: rải cân bằng theo sức chứa (water-filling) — ngày đã đầy
+      thì tràn sang ngày trống.
+    - Task **đã hoàn thành** chiếm chỗ các ngày [ngày tạo .. ngày hoàn thành].
+    - Task **quá hạn** chưa xong -> dồn vào hôm nay. Task **không hạn** -> rải
+      ~capacity giờ/ngày. T7/CN hoặc task chưa bắt đầu -> không tính.
     """
     if today.weekday() >= 5:
         return 0.0
     cap = capacity if capacity > 0 else 8.0
-    entries = []  # (khóa_hạn, est, số_ngày_cửa_sổ)
+    lo = today - timedelta(days=_PAST_LOOKBACK_DAYS)
+    hi = today + timedelta(days=_FUTURE_LOOKAHEAD_DAYS)
+
+    entries = []  # (ưu tiên, mốc sắp xếp, est, start, end, mode)
     for t in tasks:
         est = _parse_hours(t.est)
         if est <= 0:
             continue
-        if t.created and t.created > today:  # chưa bắt đầu
-            continue
-        if t.due is None:
-            span = max(1, math.ceil(est / cap))
-            due_key = date.max
-        elif t.due < today:  # quá hạn -> dồn hôm nay
-            span, due_key = 1, t.due
+        if t.is_done:
+            end = t.done_date
+            if end is None or end > today or end < lo:
+                continue                               # không rõ/không hợp lệ
+            start, prio, mode = (t.created or end), 0, "done"
+        elif t.created and t.created > today:
+            continue                                   # chưa bắt đầu
+        elif t.due is not None and t.due < today:
+            start = end = today                        # quá hạn -> dồn hôm nay
+            prio, mode = 1, "open"
+        elif t.due is None:
+            start = end = today                        # cửa sổ mở rộng bên dưới
+            prio, mode = 2, "nodue"
         else:
-            span, due_key = _workdays_between(today, t.due), t.due
-        entries.append((due_key, est, span))
+            start, end = (t.created or today), t.due
+            prio, mode = 1, "open"
+        start, end = max(start, lo), min(end, hi)
+        if end < start:
+            end = start
+        entries.append((prio, end, est, start, end, mode))
     if not entries:
         return 0.0
 
-    entries.sort(key=lambda e: e[0])  # EDF: hạn sớm trước, không hạn (date.max) cuối
-    horizon = min(max(span for _, _, span in entries), 260)
-    load = [0.0] * horizon
-    for _, est, span in entries:
-        _water_fill(load, list(range(min(span, horizon))), est, cap)
-    return load[0]  # index 0 = hôm nay
+    # Lưới ngày làm việc; chừa thêm chỗ cho task không hạn rải ~capacity giờ/ngày
+    extra = max((math.ceil(e[2] / cap) for e in entries if e[5] == "nodue"), default=0)
+    grid_start = min(min(e[3] for e in entries), today)
+    grid_end = max(max(e[4] for e in entries), today) + timedelta(days=extra * 2 + 7)
+    days = _workday_list(grid_start, grid_end)
+    today_idx = bisect.bisect_left(days, today)
+    if today_idx >= len(days) or days[today_idx] != today:
+        return 0.0
+    last = len(days) - 1
+
+    load = [0.0] * len(days)
+    for _, _, est, start, end, mode in sorted(entries, key=lambda e: (e[0], e[1])):
+        if mode == "nodue":
+            s = today_idx
+            e_idx = min(today_idx + max(1, math.ceil(est / cap)) - 1, last)
+        else:
+            s = min(max(bisect.bisect_left(days, start), 0), last)
+            e_idx = min(max(bisect.bisect_right(days, end) - 1, s), last)
+        window = list(range(s, e_idx + 1))
+        remaining = est
+
+        # Ngày đã qua (task đã xong thì tính cả ngày hoàn thành): lấp tối đa chỗ trống
+        greedy = window if mode == "done" else [i for i in window if i < today_idx]
+        for i in greedy:
+            if remaining <= 1e-9:
+                break
+            free = cap - load[i]
+            if free > 0:
+                take = min(free, remaining)
+                load[i] += take
+                remaining -= take
+        if remaining <= 1e-9:
+            continue
+
+        # Phần còn lại: rải cân bằng cho hôm nay + tương lai
+        rest = window if mode == "done" else [i for i in window if i >= today_idx]
+        if rest:
+            _water_fill(load, rest, remaining, cap)
+        else:
+            load[today_idx] += remaining
+    return load[today_idx]
 
 
 def _hnum(x: float) -> str:
@@ -418,12 +488,17 @@ def build_workload_report(today: date) -> str:
     Phân loại theo hạn (tồn từ trước / đến hạn hôm nay / chưa đến hạn / không hạn)
     và ước tính số giờ dự kiến làm hôm nay để thấy ai nhẹ tải / ai quá tải.
     """
-    tasks = [t for t in sheets.fetch_tasks() if not t.is_done]
+    all_tasks = sheets.fetch_tasks()
+    tasks = [t for t in all_tasks if not t.is_done]
     capacity = _parse_hours(cfg.get("report.daily_capacity_hours", 8)) or 8.0
 
     by_person = defaultdict(list)
     for t in tasks:
         by_person[t.assignee.strip() or _UNASSIGNED].append(t)
+    # Tính giờ cần cả task đã hoàn thành để biết những ngày đã qua bận đến đâu
+    all_by_person = defaultdict(list)
+    for t in all_tasks:
+        all_by_person[t.assignee.strip() or _UNASSIGNED].append(t)
 
     stats = {}
     for name, ts in by_person.items():
@@ -433,7 +508,7 @@ def build_workload_report(today: date) -> str:
             "due_today": sum(1 for t in ts if t.due == today),
             "upcoming": sum(1 for t in ts if t.due and t.due > today),
             "no_due": sum(1 for t in ts if not t.due),
-            "hours": _person_hours_today(ts, today, capacity),
+            "hours": _person_hours_today(all_by_person[name], today, capacity),
         }
 
     # Quá tải lên đầu (giờ giảm dần); nhóm chưa phân công xuống cuối.
