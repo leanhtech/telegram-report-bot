@@ -1765,10 +1765,13 @@ def _scan_source(src: dict, state: dict, now):
     mode, field_map = ct.detect_mode(headers, src.get("columns"))
     snapshot = ct.build_snapshot(rows, headers, field_map, mode,
                                  src.get("key_column", "") or "")
+    # Giữ nguyên error/fail_count của lần trước: việc xoá cờ lỗi (và báo "đã
+    # khôi phục") là của _bao_loi_nguon, không phải của hàm này.
     hien_tai = {
         "mode": mode, "headers": headers, "field_map": field_map,
         "snapshot": snapshot, "scanned_at": now.isoformat(),
-        "rows": len(snapshot), "error": None, "fail_count": 0,
+        "rows": len(snapshot), "error": truoc.get("error"),
+        "fail_count": truoc.get("fail_count", 0),
     }
 
     changes = []
@@ -1794,12 +1797,11 @@ async def _bao_loi_nguon(context, state: dict, src: dict, err) -> None:
         return
 
     info["fail_count"] = int(info.get("fail_count") or 0) + 1
-    info["scanned_at"] = info.get("scanned_at")
-    # Lỗi mạng/quota tạm thời: im lặng thử lại, chỉ báo sau 3 lần liên tiếp.
-    if info.get("error") or info["fail_count"] < 3:
-        if not info.get("error"):
-            log.warning("Nguồn %s lỗi lần %d: %s", sid, info["fail_count"], err)
-            return
+    if info.get("error"):
+        return      # đã báo rồi, không nhắc lại mỗi 10 phút
+    if info["fail_count"] < 3:
+        # Lỗi mạng/quota tạm thời: im lặng thử lại vòng sau.
+        log.warning("Nguồn %s lỗi lần %d: %s", sid, info["fail_count"], err)
         return
     info["error"] = str(err)
     await _nhan_admin(
