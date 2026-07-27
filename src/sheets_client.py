@@ -6,6 +6,7 @@ STT | Tên Task | Link Task Jira (Info Liên Quan) | Loại Task | Dự án |
 Nhân Sự Thực Hiện | EST (giờ) | Ngày tạo | Hạn | Ngày hoàn thành |
 Trạng thái thực hiện | Ghi chú
 """
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -238,6 +239,60 @@ class SheetsClient:
             return [str(c).strip() for r in resp.get("values", []) for c in r
                     if str(c).strip()]
         return []
+
+    # ------------------------------------------------------------------
+    # Đọc bất kỳ file/tab nào (phục vụ chức năng theo dõi thay đổi)
+    # ------------------------------------------------------------------
+    def fetch_rows(self, spreadsheet_id: str, worksheet_name: str = ""):
+        """Đọc một worksheet bất kỳ -> (headers, rows).
+
+        rows: [{"row": <số dòng trên sheet>, "cells": {tên cột: giá trị}}] —
+        đúng dạng change_tracker.build_snapshot cần. Không dùng cache của
+        fetch_tasks: job theo dõi tự quyết chu kỳ đọc.
+
+        Tên cột trống được đặt tên theo chữ cái cột; tên cột trùng nhau được
+        gắn hậu tố, vì change_tracker dùng tên cột làm khoá của từng ô.
+        """
+        sh = self._client().open_by_key(spreadsheet_id)
+        ws = sh.worksheet(worksheet_name) if worksheet_name else sh.get_worksheet(0)
+        values = ws.get_all_values()
+        if not values:
+            return [], []
+
+        headers, dem = [], {}
+        for idx, raw in enumerate(values[0], start=1):
+            name = (raw or "").strip() or "Cột %s" % _col_letter(idx)
+            dem[name] = dem.get(name, 0) + 1
+            if dem[name] > 1:
+                name = "%s (%d)" % (name, dem[name])
+            headers.append(name)
+
+        rows = []
+        for so_dong, raw in enumerate(values[1:], start=2):
+            cells = {h: (raw[i].strip() if i < len(raw) else "")
+                     for i, h in enumerate(headers)}
+            if not any(cells.values()):
+                continue
+            rows.append({"row": so_dong, "cells": cells})
+        return headers, rows
+
+    def list_worksheets(self, spreadsheet_id: str):
+        """Tên các tab trong một file (cho lệnh /nguon tab)."""
+        return [ws.title for ws in self._client().open_by_key(spreadsheet_id).worksheets()]
+
+    def service_account_email(self) -> str:
+        """Email service account — để hướng dẫn share file. KHÔNG phải khoá bí mật.
+
+        Chỉ trả lời trong chat riêng với admin; nội dung credentials.json thì không
+        bao giờ đưa ra ngoài.
+        """
+        path = cfg.get("google_sheets.credentials_file", "credentials.json")
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f).get("client_email", "")
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning("Không đọc được email service account: %s", e)
+            return ""
 
 
 sheets = SheetsClient()
