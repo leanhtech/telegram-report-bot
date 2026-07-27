@@ -318,3 +318,104 @@ def match_renames(changes: List[Change]) -> List[Change]:
             continue
         ket_qua.append(ghep.get(id(ch), ch))
     return ket_qua
+
+
+# ------------------------------------------------------------------
+# Phân loại báo ngay / gom bản tin, bộ lọc, khung giờ quét
+# ------------------------------------------------------------------
+# Báo ngay dành cho thứ bắt buộc phải phản ứng; việc chạy đúng tiến độ đọc
+# trong bản tin là đủ (spec mục 6).
+DEFAULT_INSTANT_KINDS = ["added", "removed"]
+DEFAULT_INSTANT_FIELDS = ["due", "assignee"]
+
+
+def classify(change: Change, instant_kinds: Optional[List[str]] = None,
+             instant_fields: Optional[List[str]] = None,
+             field_map: Optional[Dict[str, str]] = None) -> str:
+    """'instant' nếu thay đổi cần báo ngay, ngược lại 'digest'."""
+    kinds = list(instant_kinds) if instant_kinds else DEFAULT_INSTANT_KINDS
+    fields_ = list(instant_fields) if instant_fields else DEFAULT_INSTANT_FIELDS
+    if change.kind in kinds:
+        return "instant"
+    if change.kind in ("modified", "renamed"):
+        fmap = field_map or {}
+        for col, _cu, _moi in change.fields or []:
+            if fmap.get(col) in fields_:
+                return "instant"
+    return "digest"
+
+
+def _wanted(filters: Dict[str, Any], key: str) -> List[str]:
+    return [str(x).strip().lower() for x in (filters.get(key) or []) if str(x).strip()]
+
+
+def passes_filters(change: Change, filters: Optional[Dict[str, Any]],
+                   field_map: Optional[Dict[str, str]] = None) -> bool:
+    """Thay đổi có được gửi đi không.
+
+    Bộ lọc CHỈ chặn ở khâu gửi, không chặn ở khâu chụp ảnh — nếu lọc từ đầu thì
+    khi mở rộng bộ lọc, hàng trăm dòng cũ sẽ bị hiểu nhầm là mới (spec mục 6).
+    """
+    filters = filters or {}
+    fmap = field_map or {}
+
+    nguon = _wanted(filters, "sources")
+    if nguon and (change.source_id or "").lower() not in nguon:
+        return False
+    if change.kind == "column":
+        # Thay đổi cấu trúc sheet không gắn với dự án/nhân sự nào.
+        return True
+
+    for field_name, filter_key in (("project", "projects"), ("assignee", "assignees")):
+        muon = _wanted(filters, filter_key)
+        if not muon:
+            continue
+        col = column_for(fmap, field_name)
+        gia_tri = (change.cells.get(col, "") if col else "").strip().lower()
+        if not any(m in gia_tri for m in muon):
+            return False
+
+    tu_khoa = _wanted(filters, "keywords")
+    if tu_khoa:
+        blob = " ".join(list((change.cells or {}).values()) + [change.label or ""]).lower()
+        if not any(k in blob for k in tu_khoa):
+            return False
+    return True
+
+
+def in_active_window(now: datetime, active_days: Optional[List[int]] = None,
+                     active_hours: str = "08:00-18:00") -> bool:
+    """Có quét vào thời điểm `now` không.
+
+    ⚠️ active_days theo quy ước python-telegram-bot: 0=Chủ Nhật … 6=Thứ Bảy.
+    Vì vậy T2–T6 là [1,2,3,4,5] — KHÔNG phải [0,1,2,3,4] (MEMORY.md mục 1).
+    datetime.weekday() dùng 0=Thứ Hai nên phải quy đổi (wd + 1) % 7.
+    """
+    days = list(active_days) if active_days else [1, 2, 3, 4, 5]
+    if ((now.weekday() + 1) % 7) not in days:
+        return False
+    try:
+        dau, cuoi = str(active_hours).split("-")
+        gio_dau, phut_dau = (int(x) for x in dau.strip().split(":"))
+        gio_cuoi, phut_cuoi = (int(x) for x in cuoi.strip().split(":"))
+    except (ValueError, AttributeError):
+        return True     # cấu hình sai -> quét cả ngày còn hơn im lặng
+    phut = now.hour * 60 + now.minute
+    return gio_dau * 60 + phut_dau <= phut < gio_cuoi * 60 + phut_cuoi
+
+
+def is_first_scan_of_day(last_scan_at: Optional[str], now: datetime) -> bool:
+    """Đây có phải lần quét đầu tiên của một ngày mới không.
+
+    Lần quét đầu ngày ép mọi thay đổi sang loại 'gom' để chúng đi chung một bản
+    tin sáng, thay vì bắn một loạt tin lúc 08:00 (spec mục 6).
+    Lần quét đầu tiên tuyệt đối (chưa có mốc cũ) trả False: khi đó chưa có ảnh
+    chụp nên cũng không có gì để báo.
+    """
+    if not last_scan_at:
+        return False
+    try:
+        truoc = datetime.fromisoformat(last_scan_at)
+    except (ValueError, TypeError):
+        return False
+    return truoc.date() != now.date()

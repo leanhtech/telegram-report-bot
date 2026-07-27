@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Test cho src/change_tracker.py — chạy được không cần gspread/telegram."""
 import unittest
+from datetime import datetime
 
 from src import change_tracker as ct
 
@@ -267,6 +268,98 @@ class TestDoDoiTen(unittest.TestCase):
                                     self._doi("added", "Rà soát dữ liệu HK1", moi)])
         self.assertEqual(ket_qua[0].kind, "renamed")
         self.assertIn(["Hạn", "26/07", "30/07"], ket_qua[0].fields)
+
+
+class TestPhanLoai(unittest.TestCase):
+    def setUp(self):
+        _, self.fm = ct.detect_mode(TASK_HEADERS)
+
+    def test_dong_moi_bao_ngay(self):
+        ch = ct.Change(kind="added", label="A")
+        self.assertEqual(ct.classify(ch, field_map=self.fm), "instant")
+
+    def test_doi_han_bao_ngay(self):
+        ch = ct.Change(kind="modified", fields=[["Hạn", "26/07", "30/07"]])
+        self.assertEqual(ct.classify(ch, field_map=self.fm), "instant")
+
+    def test_doi_trang_thai_gom_vao_ban_tin(self):
+        ch = ct.Change(kind="modified",
+                       fields=[["Trạng thái thực hiện", "Đang thực hiện", "Hoàn thành"]])
+        self.assertEqual(ct.classify(ch, field_map=self.fm), "digest")
+
+    def test_cau_hinh_de_dua_trang_thai_len_bao_ngay(self):
+        ch = ct.Change(kind="modified",
+                       fields=[["Trạng thái thực hiện", "A", "B"]])
+        self.assertEqual(
+            ct.classify(ch, instant_fields=["status"], field_map=self.fm), "instant")
+
+
+class TestBoLoc(unittest.TestCase):
+    def setUp(self):
+        _, self.fm = ct.detect_mode(TASK_HEADERS)
+        self.ch = ct.Change(source_id="vnedu", kind="added", label="Đồng bộ điểm",
+                            cells={"Tên Task": "Đồng bộ điểm", "Dự án": "vnEdu",
+                                   "Nhân Sự Thực Hiện": "Nam"})
+
+    def test_khong_khai_gi_thi_qua_het(self):
+        self.assertTrue(ct.passes_filters(self.ch, {}, self.fm))
+        self.assertTrue(ct.passes_filters(self.ch, None, self.fm))
+
+    def test_loc_theo_nguon(self):
+        self.assertTrue(ct.passes_filters(self.ch, {"sources": ["vnedu"]}, self.fm))
+        self.assertFalse(ct.passes_filters(self.ch, {"sources": ["kiosk"]}, self.fm))
+
+    def test_loc_theo_nhan_su(self):
+        self.assertTrue(ct.passes_filters(self.ch, {"assignees": ["Nam"]}, self.fm))
+        self.assertFalse(ct.passes_filters(self.ch, {"assignees": ["Lan"]}, self.fm))
+
+    def test_loc_tu_khoa_dung_duoc_cho_che_do_generic(self):
+        generic = ct.Change(source_id="kh", kind="added", label="Nâng cấp máy chủ",
+                            cells={"Nội dung": "Nâng cấp máy chủ", "Ghi nhận": "50%"})
+        self.assertTrue(ct.passes_filters(generic, {"keywords": ["máy chủ"]}, {}))
+        self.assertFalse(ct.passes_filters(generic, {"keywords": ["hoá đơn"]}, {}))
+
+    def test_thay_doi_cot_chi_chiu_loc_nguon(self):
+        cot = ct.Change(source_id="vnedu", kind="column", label="Rủi ro")
+        self.assertTrue(ct.passes_filters(cot, {"assignees": ["Lan"]}, self.fm))
+        self.assertFalse(ct.passes_filters(cot, {"sources": ["kiosk"]}, self.fm))
+
+
+class TestKhungGio(unittest.TestCase):
+    def test_trong_gio_hanh_chinh_thu_hai(self):
+        # 2026-07-27 là Thứ Hai
+        now = datetime(2026, 7, 27, 10, 20)
+        self.assertTrue(ct.in_active_window(now, [1, 2, 3, 4, 5], "08:00-18:00"))
+
+    def test_ngoai_khung_gio(self):
+        self.assertFalse(
+            ct.in_active_window(datetime(2026, 7, 27, 21, 0), [1, 2, 3, 4, 5], "08:00-18:00"))
+
+    def test_thu_bay_khong_quet_voi_cau_hinh_t2_t6(self):
+        # 2026-08-01 là Thứ Bảy -> PTB day = 6, không nằm trong [1..5]
+        self.assertFalse(
+            ct.in_active_window(datetime(2026, 8, 1, 10, 0), [1, 2, 3, 4, 5], "08:00-18:00"))
+
+    def test_chu_nhat_la_so_0_theo_quy_uoc_ptb(self):
+        # 2026-08-02 là Chủ Nhật
+        self.assertTrue(ct.in_active_window(datetime(2026, 8, 2, 10, 0), [0], "08:00-18:00"))
+
+    def test_active_hours_sai_dinh_dang_thi_coi_nhu_ca_ngay(self):
+        self.assertTrue(ct.in_active_window(datetime(2026, 7, 27, 23, 0),
+                                            [1, 2, 3, 4, 5], "linh tinh"))
+
+
+class TestLanQuetDauNgay(unittest.TestCase):
+    def test_lan_quet_dau_tuyet_doi_khong_tinh(self):
+        self.assertFalse(ct.is_first_scan_of_day(None, datetime(2026, 7, 27, 8, 0)))
+
+    def test_quet_dau_tien_cua_ngay_moi(self):
+        self.assertTrue(ct.is_first_scan_of_day("2026-07-26T17:50:00",
+                                                datetime(2026, 7, 27, 8, 0)))
+
+    def test_cac_lan_quet_sau_trong_ngay(self):
+        self.assertFalse(ct.is_first_scan_of_day("2026-07-27T08:00:00",
+                                                 datetime(2026, 7, 27, 10, 20)))
 
 
 if __name__ == "__main__":
