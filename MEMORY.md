@@ -3,7 +3,7 @@
 Ghi lại **quyết định, bối cảnh và bẫy** không nhìn thấy được từ code, để AI/agent
 (và người) nắm nhanh "tại sao". Tra cứu "cái gì / như thế nào" ở [AGENTS.md](AGENTS.md).
 
-_Cập nhật gần nhất: 2026-07-21._
+_Cập nhật gần nhất: 2026-07-26._
 
 ## Hiện trạng (2026-07-21)
 
@@ -70,6 +70,26 @@ _Cập nhật gần nhất: 2026-07-21._
    fail. `_parse_value(raw, key)` nhận list khi khóa ∈ `LIST_KEYS`, có dấu phẩy, hoặc
    bọc `[ ]`; `null` → `[]`. Chỉ `schedules.*` mới nạp lại lịch; `team.members` nạp lại roster.
 
+9. **Theo dõi thay đổi trên sheet kế hoạch (`watch.*`).** Nhu cầu: hằng ngày phải mở
+   thủ công các file kế hoạch do người khác cập nhật để dò nội dung phát sinh.
+   - **Chọn snapshot + diff, không chọn Apps Script webhook.** Webhook cần cài script vào
+     từng file (phải có quyền sửa) và bot phải mở cổng HTTP public — chi phí vận hành lớn
+     hơn giá trị. Drive Revisions API bị loại vì không diff được cấp ô.
+   - **Tách hẳn khỏi luồng báo cáo.** Sheet "Task Đã Điều Phối" do chính chủ cập nhật nên
+     không cần theo dõi; `fetch_tasks()` và `google_sheets.*` giữ nguyên, chỉ **thêm**
+     `fetch_rows()`.
+   - **Khoá định danh không theo vị trí dòng** (Jira → STT → vân tay → nhãn dòng) để sort
+     lại sheet không sinh thông báo. Kèm bước dò đổi tên, nếu không việc sửa tên sẽ bị báo
+     nhầm thành xoá + thêm mới.
+   - **Mỗi file một kiểu** → hai chế độ: `task` (nhận ra ý nghĩa cột) và `generic` (báo
+     theo tên cột nguyên văn). Không ép người dùng khai cấu hình trước mới dùng được.
+   - **Bộ lọc chỉ chặn ở khâu gửi**, ảnh chụp lưu toàn bộ — nếu lọc từ đầu, hôm sau mở
+     rộng bộ lọc sẽ có hàng trăm dòng cũ bị hiểu nhầm là mới.
+   - **Ba module logic không import gspread/telegram/pytz** → repo lần đầu có test tự động
+     chạy được trên máy dev (`python -m unittest discover -s tests -t .`).
+   - **Lần quét đầu của ngày ép mọi thay đổi sang loại "gom"** để thay đổi qua đêm đi
+     chung một bản tin sáng thay vì dội tin lúc mở khung giờ.
+
 ## Bẫy đã biết (đừng vấp lại)
 
 - **Ngày PTB `0=Chủ Nhật`** (mục 1). Dùng `[1..5]` = T2–T6.
@@ -78,6 +98,9 @@ _Cập nhật gần nhất: 2026-07-21._
 - **`.claude/launch.json` trỏ dự án khác** (kiosk-dvc/uvicorn) — không liên quan.
 - **`README.md` mục "Logic sinh báo cáo" đã cũ** — tin theo AGENTS.md.
 - Máy dev **không cài** gspread/pytz/telegram → test bằng stub module + monkeypatch.
+- **`watch.active_days` cũng theo quy ước `0 = Chủ Nhật`** như `schedules.*`.
+- **Mất thư mục `state/`** (quên mount) → bot chụp lại từ đầu và im lặng, không dội tin —
+  đúng thiết kế, đừng "sửa".
 
 ## Việc mở / đề xuất tiếp theo
 

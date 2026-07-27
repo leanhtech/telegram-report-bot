@@ -160,7 +160,32 @@ Trong chat riêng, bạn cũng có thể nhắn tự nhiên như "tiến độ u
 - Tên task được làm sạch: bỏ các prefix [TEST], [KIOSK][APP]_,... và tự chèn động từ (Xử lý, Kiểm thử, Tổng hợp, Thực hiện,...) nếu tên task chưa có động từ
 - Task lặp lại ở cả hôm nay và ngày mai sẽ tự thêm "Tiếp tục..." ở phần dự kiến
 
-## 6. Bảo mật
+## 6. Theo dõi thay đổi trên file kế hoạch
+
+Bot có thể tự canh các file Google Sheet kế hoạch khác (do đồng nghiệp cập nhật) và
+báo khi có nội dung phát sinh hoặc bị sửa.
+
+1. Chia sẻ file sheet cho service account của bot với quyền **Viewer**. Chưa biết địa
+   chỉ? Cứ gõ `/nguon them <link>`, bot sẽ báo lại địa chỉ cần share.
+2. Trong Telegram, gõ: `/nguon them <link Google Sheet>`
+   Muốn đặt tên và chọn tab: `/nguon them <link> | Kế hoạch vnEdu | Sheet1`
+3. Bật chức năng: `/theodoi bat`
+
+Các lệnh liên quan:
+
+- `/nguon` — xem các file đang theo dõi, quét lần cuối lúc nào, có lỗi không
+- `/nguon tab <id>` — xem các tab; `/nguon tab <id> <tên tab>` để đổi
+- `/nguon xoa <id>` — bỏ theo dõi
+- `/moi` — xem các thay đổi kể từ bản tin gần nhất
+
+Mặc định bot quét 10 phút/lần trong khung 08:00–18:00 các ngày Thứ Hai–Thứ Sáu; báo ngay
+khi có dòng mới, dòng bị xoá, đổi hạn hoặc đổi người phụ trách; các thay đổi còn lại gom
+vào bản tin lúc 08:30 và 16:30. Đổi bằng `/cauhinh set watch.<khóa> <giá trị>`.
+
+**Lưu ý khi chạy Docker:** thư mục `state/` phải được mount (đã có sẵn trong
+`docker-compose.yml`). Mất thư mục này bot chỉ chụp lại từ đầu, không gửi tin dội.
+
+## 7. Bảo mật
 
 - credentials.json và bot_token là thông tin nhạy cảm, không commit lên git (đã có .gitignore)
 - Chỉ user trong admin_ids mới đổi được cấu hình

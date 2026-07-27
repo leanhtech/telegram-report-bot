@@ -183,6 +183,34 @@ lamMoi/lammoi, chatid, cauhinh`. Trong chat riêng còn có trả lời tự nhi
   account. **Không** commit, **không** dán nội dung secret vào tài liệu/PR/chat.
 - Chỉ `admin_ids` mới `/cauhinh`. Bot chỉ cần quyền Viewer trên sheet.
 
+## 14. Theo dõi thay đổi trên sheet kế hoạch (`watch.*`)
+
+Nhánh **độc lập** với báo cáo: theo dõi các file sheet kế hoạch do người khác cập nhật,
+báo dòng mới / dòng bị xoá / ô bị sửa. Sheet "Task Đã Điều Phối" **không** nằm trong
+phạm vi này.
+
+- `change_tracker.py` — nhận diện cột (`detect_mode` → chế độ `task`/`generic`), khoá
+  định danh (`make_key`), chụp ảnh (`build_snapshot`), so sánh (`diff_snapshots`), dò đổi
+  tên (`match_renames`), phân loại (`classify`), lọc (`passes_filters`), khung giờ
+  (`in_active_window`, `is_first_scan_of_day`).
+- `change_reporter.py` — dựng HTML (`format_instant`, `format_digest`, `format_overflow`).
+- `state_store.py` — `state/watch_state.json`, ghi atomic, chịu được file hỏng.
+- `sheets_client.fetch_rows/list_worksheets/service_account_email` — đọc file bất kỳ.
+- `bot.py` — `job_watch_scan` (run_repeating), `job_watch_digest` (run_daily),
+  `/moi`, `/nguon`, `/theodoi`.
+
+**Ba module đầu KHÔNG được import gspread/telegram/pytz** — đó là điều kiện để
+`python -m unittest discover -s tests -t .` chạy được trên máy dev.
+
+Điểm dễ vấp:
+- **Khoá định danh không theo vị trí dòng** → sort lại sheet không sinh thông báo. Đừng
+  "sửa" thành số dòng.
+- **Bộ lọc chỉ chặn ở khâu gửi**, ảnh chụp luôn lưu toàn bộ sheet. Lọc từ đầu sẽ khiến
+  việc mở rộng bộ lọc bị hiểu nhầm thành hàng loạt "dòng mới".
+- **Chưa có ảnh chụp thì không báo gì** (bootstrap). Bỏ quy tắc này là dội hàng trăm tin.
+- `watch.active_days` dùng đúng quy ước PTB `0 = Chủ Nhật`.
+- Tin của chức năng này là HTML → luôn `parse_mode=ParseMode.HTML` + `_esc`.
+
 ## 13. Bẫy cần nhớ (checklist khi sửa)
 
 1. Ngày trong tuần: PTB `0=CN`. Dùng `[1..5]` cho T2–T6.
