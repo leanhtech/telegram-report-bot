@@ -212,8 +212,8 @@ phạm vi này.
 
 - `change_tracker.py` — nhận diện cột (`detect_mode` → chế độ `task`/`generic`), khoá
   định danh (`make_key`), chụp ảnh (`build_snapshot`), so sánh (`diff_snapshots`), dò đổi
-  tên (`match_renames`), phân loại (`classify`), lọc (`passes_filters`), khung giờ
-  (`in_active_window`, `is_first_scan_of_day`).
+  tên (`match_renames`), phân loại (`classify`), lọc (`passes_filters`), chia bản tin
+  theo đích (`for_digest`), khung giờ (`in_active_window`, `is_first_scan_of_day`).
 - `change_reporter.py` — dựng HTML (`format_instant`, `format_digest`, `format_overflow`).
 - `state_store.py` — `state/watch_state.json`, ghi atomic, chịu được file hỏng.
 - `sheets_client.fetch_rows/list_worksheets/service_account_email` — đọc file bất kỳ.
@@ -229,5 +229,16 @@ phạm vi này.
 - **Bộ lọc chỉ chặn ở khâu gửi**, ảnh chụp luôn lưu toàn bộ sheet. Lọc từ đầu sẽ khiến
   việc mở rộng bộ lọc bị hiểu nhầm thành hàng loạt "dòng mới".
 - **Chưa có ảnh chụp thì không báo gì** (bootstrap). Bỏ quy tắc này là dội hàng trăm tin.
+- **Bản tin gom phải tính theo TỪNG đích, không dùng một cờ chung.** `instant_sent` chỉ
+  cho biết thay đổi đã được đẩy tin báo ngay hay chưa; đích cấu hình `send: [digest]`
+  **không hề nhận** tin báo ngay nên bản tin của nó phải chứa **tất cả** — đó là việc của
+  `ct.for_digest(changes, "instant" in nhan)`. Nếu quay lại lọc chung
+  `[c for c in cho if not c.instant_sent]` trước khi vào vòng lặp đích, các đích chỉ nhận
+  bản tin sẽ **mất trắng** mọi task mới / đổi hạn / đổi người.
+- **Lô "quá ngưỡng" (`max_instant_items`) chỉ được gửi tin tóm tắt, nên phải giữ
+  `instant_sent = False`** để chi tiết còn chảy vào bản tin. Ngưỡng này so sánh ở **đúng
+  một chỗ**: `job_watch_scan`. Đừng thêm phép so thứ hai trong `_send_watch`.
 - `watch.active_days` dùng đúng quy ước PTB `0 = Chủ Nhật`.
 - Tin của chức năng này là HTML → luôn `parse_mode=ParseMode.HTML` + `_esc`.
+- `dtime(hh, mm)` phải nằm **trong** `try` khi đăng ký lịch: `"08:99"` parse ra int hợp lệ
+  rồi mới ném `ValueError`, mà `register_jobs` chạy sau khi đã gỡ hết job cũ.

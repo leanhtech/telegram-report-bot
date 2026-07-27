@@ -203,10 +203,19 @@ Một lần quét ra hơn **15** thay đổi (ai đó dán 50 dòng, kéo fill c
 hết, gửi một dòng tóm tắt: _"43 thay đổi trong 10 phút qua, chủ yếu ở Kế hoạch vnEdu. Gõ
 /moi để xem"_ — rồi đẩy toàn bộ vào hàng chờ.
 
-### Không báo trùng
+> Vì tin tóm tắt **không** mang chi tiết, lô quá ngưỡng phải được coi là **chưa báo** để
+> chi tiết còn chảy vào bản tin kế tiếp. Nếu đánh dấu đã báo, chi tiết sẽ bị loại khỏi bản
+> tin rồi bị dọn khỏi hàng chờ — mất vĩnh viễn nếu không kịp gõ `/moi`.
+
+### Không báo trùng — tính theo **từng đích**
 
 Thay đổi đã báo ngay **không lặp lại** trong bản tin; bản tin chỉ ghi một dòng
 _"(3 thay đổi đã báo ngay trước đó)"_.
+
+> ⚠️ Quy tắc này chỉ áp dụng cho **đích có nhận tin báo ngay**. Đích cấu hình
+> `send: [digest]` không hề nhận tin báo ngay, nên bản tin của nó phải chứa **tất cả**.
+> Dùng một cờ chung cho mọi đích sẽ khiến các đích chỉ-nhận-bản-tin mất trắng mọi task
+> mới / đổi hạn / đổi người. Xem `change_tracker.for_digest`.
 
 ### Nơi nhận
 

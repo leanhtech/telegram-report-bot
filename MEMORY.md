@@ -90,6 +90,20 @@ _Cập nhật gần nhất: 2026-07-26._
    - **Lần quét đầu của ngày ép mọi thay đổi sang loại "gom"** để thay đổi qua đêm đi
      chung một bản tin sáng thay vì dội tin lúc mở khung giờ.
 
+10. **Bản tin gom phải tính theo từng đích (`ct.for_digest`).** Bản đầu dùng **một cờ
+    chung** `instant_sent` rồi lọc `[c for c in cho if not c.instant_sent]` trước khi vào
+    vòng lặp đích. Review toàn nhánh phát hiện: đích cấu hình `send: [digest]` (đúng cấu
+    hình mẫu "nhóm team chỉ nhận bản tin") **không nhận tin báo ngay**, mà bản tin lại đã
+    loại sẵn những thay đổi đó → **mất trắng** mọi task mới / đổi hạn / đổi người, im lặng
+    và vĩnh viễn. Nay `_send_watch` hỏi `ct.for_digest(changes, "instant" in nhan)` cho
+    **từng đích**: đích không nhận báo ngay thì bản tin chứa tất cả.
+    Cùng gốc là lỗi thứ hai: lô **quá `max_instant_items`** chỉ được gửi tin tóm tắt nhưng
+    vẫn bị đánh dấu đã báo → chi tiết biến mất khỏi bản tin và bị dọn khỏi hàng chờ. Nay
+    lô quá ngưỡng giữ `instant_sent = False`, và ngưỡng chỉ so ở **một chỗ**
+    (`job_watch_scan`).
+    **Vì sao nhớ:** cả hai đều vô hình với test đơn vị (chỉ tồn tại ở `bot.py` — phần
+    không test tự động được) và chỉ lộ ra khi nhìn toàn hệ thống. Đừng gộp ngược về cờ chung.
+
 ## Bẫy đã biết (đừng vấp lại)
 
 - **Ngày PTB `0=Chủ Nhật`** (mục 1). Dùng `[1..5]` = T2–T6.
@@ -101,6 +115,8 @@ _Cập nhật gần nhất: 2026-07-26._
 - **`watch.active_days` cũng theo quy ước `0 = Chủ Nhật`** như `schedules.*`.
 - **Mất thư mục `state/`** (quên mount) → bot chụp lại từ đầu và im lặng, không dội tin —
   đúng thiết kế, đừng "sửa".
+- **Bản tin gom tính theo TỪNG đích** (`ct.for_digest`), không được lọc chung bằng
+  `instant_sent` trước vòng lặp đích — xem mục 10.
 
 ## Việc mở / đề xuất tiếp theo
 
