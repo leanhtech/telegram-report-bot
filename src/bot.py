@@ -524,6 +524,7 @@ NGUON_CU_PHAP = (
     "/nguon\n"
     "/nguon them <link> | Tên hiển thị | Tên tab\n"
     "/nguon tab <id> [tên tab]\n"
+    "/nguon cot <id> [<Tên cột> = <ý nghĩa> | xoa <Tên cột>]\n"
     "/nguon xoa <id>"
 )
 
@@ -537,6 +538,48 @@ def _bo_anh_chup(state: dict, sid: str) -> None:
     """
     (state.get("sources") or {}).pop(sid, None)
     state_store.save(watch_state_path(), state)
+
+
+def _tim_nguon(sources: list, sid: str):
+    """Nguồn có id `sid`, hoặc None."""
+    return next((s for s in sources if str(s.get("id")) == sid), None)
+
+
+async def _doc_headers(update: Update, src: dict):
+    """Tiêu đề cột thật của một nguồn. Lỗi -> đã trả lời người dùng, trả None."""
+    try:
+        headers, _rows = sheets.fetch_rows(src.get("spreadsheet_id"),
+                                           src.get("worksheet_name") or "")
+        return headers
+    except Exception as e:
+        await update.message.reply_text(
+            "Không đọc được sheet: %s\n\n"
+            "Nếu là lỗi quyền, hãy chia sẻ file cho địa chỉ sau với quyền Viewer:\n%s"
+            % (e, sheets.service_account_email() or "(chưa đọc được credentials)"))
+        return None
+
+
+def _mo_ta_anh_xa(src: dict, headers: list, columns: dict, sid: str) -> list:
+    """Các dòng mô tả ánh xạ cột hiện tại của một nguồn."""
+    mode, nhan_ra, tong = ct.describe_mode(headers, columns)
+    dong = ["Ánh xạ cột của “%s” (id: %s)" % (src.get("name") or sid, sid), ""]
+    if columns:
+        for cot, y_nghia in columns.items():
+            dong.append("- %s = %s" % (cot, y_nghia))
+    else:
+        dong.append("(chưa khai cột nào — bot đang tự đoán)")
+    dong.append("")
+    dong.append("Cột thật trong sheet: %s" % ", ".join(headers))
+    dong.append("Cột khoá: %s" % (src.get("key_column") or "(chưa đặt)"))
+    dong.append("Chế độ: %s (%d/%d cột có ý nghĩa)" % (mode, nhan_ra, tong))
+    thieu = ct.missing_for_task(headers, columns)
+    if thieu:
+        dong.append("Còn thiếu để lên chế độ task: %s" % ", ".join(thieu))
+    dong.append("")
+    dong.append("Khai: /nguon cot %s <Tên cột> = <ý nghĩa>" % sid)
+    dong.append("Gỡ:  /nguon cot %s xoa <Tên cột>" % sid)
+    dong.append("Ý nghĩa hợp lệ: %s" % ", ".join(sorted(ct.VALID_FIELDS)))
+    return dong
 
 
 async def _nguon_liet_ke(update: Update, sources: list, state: dict):
@@ -641,7 +684,7 @@ async def _nguon_them(update: Update, sources: list, state: dict, args: list):
 async def _nguon_tab(update: Update, sources: list, state: dict, args: list):
     """Xem hoặc đổi tab đang theo dõi của một nguồn."""
     sid = args[1]
-    src = next((s for s in sources if str(s.get("id")) == sid), None)
+    src = _tim_nguon(sources, sid)
     if not src:
         await update.message.reply_text("Không có nguồn id “%s”." % sid)
         return
@@ -684,6 +727,90 @@ async def _nguon_xoa(update: Update, sources: list, state: dict, args: list):
     await update.message.reply_text("Đã bỏ theo dõi nguồn “%s”." % sid)
 
 
+async def _nguon_cot(update: Update, sources: list, state: dict, args: list):
+    """Xem / khai / gỡ ánh xạ cột của một nguồn.
+
+    Đổi ánh xạ là đổi cách sinh khoá định danh dòng nên luôn phải bỏ ảnh chụp cũ.
+    """
+    sid = args[1]
+    src = _tim_nguon(sources, sid)
+    if not src:
+        await update.message.reply_text("Không có nguồn id “%s”." % sid)
+        return
+    headers = await _doc_headers(update, src)
+    if headers is None:
+        return
+
+    columns = dict(src.get("columns") or {})
+    phan = " ".join(args[2:]).strip()
+
+    # --- Chỉ xem ---
+    if not phan:
+        await update.message.reply_text(
+            "\n".join(_mo_ta_anh_xa(src, headers, columns, sid)))
+        return
+
+    truoc = ct.describe_mode(headers, columns)[0]
+
+    # --- Gỡ ánh xạ ---
+    if phan.lower().startswith("xoa "):
+        ten_cot = phan[4:].strip()
+        goc = ct.match_column(list(columns), ten_cot)
+        if not goc:
+            await update.message.reply_text(
+                "Cột “%s” chưa được khai ánh xạ nên không có gì để gỡ." % ten_cot)
+            return
+        columns.pop(goc)
+        src["columns"] = columns
+        cfg.set("watch.sources", sources)
+        _bo_anh_chup(state, sid)
+        sau, nhan_ra, tong = ct.describe_mode(headers, columns)
+        await update.message.reply_text(
+            "Đã gỡ ánh xạ của “%s”.\n"
+            "Đã nhận ra ý nghĩa %d/%d cột.\n"
+            "Chế độ: %s → %s\n"
+            "Sẽ chụp lại ảnh ở lần quét tới (không báo tin giả)."
+            % (goc, nhan_ra, tong, truoc, sau))
+        return
+
+    # --- Khai một cột ---
+    if "=" not in phan:
+        await update.message.reply_text(
+            "Cú pháp: /nguon cot %s <Tên cột> = <ý nghĩa>\n"
+            "Gỡ:     /nguon cot %s xoa <Tên cột>\n"
+            "Xem:    /nguon cot %s" % (sid, sid, sid))
+        return
+    # Tách ở dấu '=' cuối cùng: tên cột có thể chứa '=', tên trường thì không.
+    ten_cot, y_nghia = phan.rsplit("=", 1)
+    ten_cot, y_nghia = ten_cot.strip(), y_nghia.strip().lower()
+
+    cot_goc = ct.match_column(headers, ten_cot)
+    if not cot_goc:
+        await update.message.reply_text(
+            "Sheet không có cột “%s”.\nCác cột thật: %s" % (ten_cot, ", ".join(headers)))
+        return
+    if y_nghia not in ct.VALID_FIELDS:
+        await update.message.reply_text(
+            "Ý nghĩa “%s” không hợp lệ.\nHợp lệ: %s"
+            % (y_nghia, ", ".join(sorted(ct.VALID_FIELDS))))
+        return
+
+    columns[cot_goc] = y_nghia
+    src["columns"] = columns
+    cfg.set("watch.sources", sources)
+    _bo_anh_chup(state, sid)
+
+    sau, nhan_ra, tong = ct.describe_mode(headers, columns)
+    dong = ["Đã khai “%s” = %s." % (cot_goc, y_nghia),
+            "Đã nhận ra ý nghĩa %d/%d cột." % (nhan_ra, tong),
+            "Chế độ: %s → %s" % (truoc, sau)]
+    thieu = ct.missing_for_task(headers, columns)
+    if thieu:
+        dong.append("Còn thiếu để lên chế độ task: %s" % ", ".join(thieu))
+    dong.append("Sẽ chụp lại ảnh ở lần quét tới (không báo tin giả).")
+    await update.message.reply_text("\n".join(dong))
+
+
 async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quản lý danh sách file sheet đang được theo dõi (chỉ admin)."""
     if not is_admin(update):
@@ -704,6 +831,9 @@ async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if lenh == "tab" and len(args) >= 2:
         await _nguon_tab(update, sources, state, args)
+        return
+    if lenh == "cot" and len(args) >= 2:
+        await _nguon_cot(update, sources, state, args)
         return
     if lenh == "xoa" and len(args) >= 2:
         await _nguon_xoa(update, sources, state, args)
