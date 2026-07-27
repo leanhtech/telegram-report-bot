@@ -247,3 +247,73 @@ def diff_snapshots(old_state: Dict[str, Any], new_state: Dict[str, Any],
                                   label=row_label(cells, old_headers, old_field_map),
                                   row=entry.get("row"), cells=cells))
     return changes
+
+
+# ------------------------------------------------------------------
+# Dò đổi tên: ghép cặp một dòng "mất" với một dòng "thêm"
+# ------------------------------------------------------------------
+RENAME_CELLS_RATIO = 0.7   # tỉ lệ ô giống nhau tối thiểu
+RENAME_LABEL_RATIO = 0.6   # độ giống của nhãn khi các ô khác trùng khớp
+
+
+def _cells_ratio(a: Dict[str, str], b: Dict[str, str]) -> float:
+    """Tính tỉ lệ các ô có giá trị giống nhau giữa hai bộ cells."""
+    keys = set(a or {}) | set(b or {})
+    if not keys:
+        return 0.0
+    giong = sum(1 for k in keys
+                if (a.get(k, "") or "").strip() == (b.get(k, "") or "").strip())
+    return giong / len(keys)
+
+
+def _drop_label(cells: Dict[str, str], label: str) -> Dict[str, str]:
+    """Bỏ ô đang giữ nhãn, để so phần còn lại của dòng."""
+    return {k: v for k, v in (cells or {}).items() if (v or "").strip() != label}
+
+
+def match_renames(changes: List[Change]) -> List[Change]:
+    """Ghép removed + added thành renamed khi hai dòng thực ra là một.
+
+    Nếu không ghép, việc sửa tên một dòng sẽ bị báo nhầm thành 'đã xoá' cộng
+    'thêm mới' (spec mục 5).
+    """
+    removed = [c for c in changes if c.kind == "removed"]
+    added = [c for c in changes if c.kind == "added"]
+    if not removed or not added:
+        return list(changes)
+
+    ung_vien = []
+    for cu in removed:
+        for moi in added:
+            if cu.source_id != moi.source_id:
+                continue
+            ty_le_o = _cells_ratio(cu.cells, moi.cells)
+            ty_le_nhan = SequenceMatcher(None, (cu.label or "").lower(),
+                                         (moi.label or "").lower()).ratio()
+            khac_giong_het = _cells_ratio(_drop_label(cu.cells, cu.label),
+                                          _drop_label(moi.cells, moi.label))
+            if ty_le_o >= RENAME_CELLS_RATIO or (
+                    ty_le_nhan >= RENAME_LABEL_RATIO and khac_giong_het >= 0.5):
+                ung_vien.append((max(ty_le_o, ty_le_nhan), cu, moi))
+
+    ung_vien.sort(key=lambda x: x[0], reverse=True)
+    da_dung_cu, da_dung_moi, ghep = set(), set(), {}
+    for _, cu, moi in ung_vien:
+        if id(cu) in da_dung_cu or id(moi) in da_dung_moi:
+            continue
+        da_dung_cu.add(id(cu))
+        da_dung_moi.add(id(moi))
+        diffs = [[col, cu.cells.get(col, ""), moi.cells.get(col, "")]
+                 for col in moi.cells
+                 if (cu.cells.get(col, "") or "").strip()
+                 != (moi.cells.get(col, "") or "").strip()]
+        ghep[id(moi)] = Change(source_id=moi.source_id, kind="renamed", key=moi.key,
+                               label=moi.label, old_label=cu.label, row=moi.row,
+                               fields=diffs, cells=moi.cells)
+
+    ket_qua = []
+    for ch in changes:
+        if ch.kind == "removed" and id(ch) in da_dung_cu:
+            continue
+        ket_qua.append(ghep.get(id(ch), ch))
+    return ket_qua

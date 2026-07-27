@@ -218,5 +218,56 @@ class TestSoSanh(unittest.TestCase):
         self.assertEqual(lai.kind, "modified")
 
 
+class TestDoDoiTen(unittest.TestCase):
+    def _doi(self, kind, label, cells, old_label=""):
+        return ct.Change(source_id="vnedu", kind=kind, key="k:" + label,
+                         label=label, old_label=old_label, cells=cells)
+
+    def test_ghep_cap_khi_cac_o_khac_giu_nguyen(self):
+        cu = {"Tên Task": "Rà soát dữ liệu", "Nhân Sự Thực Hiện": "Nam", "Hạn": "26/07"}
+        moi = {"Tên Task": "Rà soát & làm sạch dữ liệu", "Nhân Sự Thực Hiện": "Nam",
+               "Hạn": "26/07"}
+        changes = [self._doi("removed", "Rà soát dữ liệu", cu),
+                   self._doi("added", "Rà soát & làm sạch dữ liệu", moi)]
+        ket_qua = ct.match_renames(changes)
+        self.assertEqual([c.kind for c in ket_qua], ["renamed"])
+        self.assertEqual(ket_qua[0].old_label, "Rà soát dữ liệu")
+        self.assertEqual(ket_qua[0].label, "Rà soát & làm sạch dữ liệu")
+
+    def test_hai_viec_khac_han_thi_khong_ghep(self):
+        changes = [
+            self._doi("removed", "Nâng cấp máy chủ",
+                      {"Tên Task": "Nâng cấp máy chủ", "Nhân Sự Thực Hiện": "Nam"}),
+            self._doi("added", "Viết tài liệu bàn giao",
+                      {"Tên Task": "Viết tài liệu bàn giao", "Nhân Sự Thực Hiện": "Lan"}),
+        ]
+        self.assertEqual(sorted(c.kind for c in ct.match_renames(changes)),
+                         ["added", "removed"])
+
+    def test_khong_ghep_cheo_hai_nguon_khac_nhau(self):
+        cells = {"Tên Task": "A", "Nhân Sự Thực Hiện": "Nam"}
+        a = self._doi("removed", "A", cells)
+        b = self._doi("added", "A2", dict(cells, **{"Tên Task": "A2"}))
+        b.source_id = "kiosk"
+        self.assertEqual(sorted(c.kind for c in ct.match_renames([a, b])),
+                         ["added", "removed"])
+
+    def test_giu_nguyen_cac_thay_doi_khac(self):
+        modified = ct.Change(source_id="vnedu", kind="modified", key="k:1", label="X",
+                             fields=[["Hạn", "26/07", "30/07"]])
+        ket_qua = ct.match_renames([modified])
+        self.assertEqual(len(ket_qua), 1)
+        self.assertEqual(ket_qua[0].kind, "modified")
+
+    def test_doi_ten_kem_doi_han_van_giu_lai_diff_o(self):
+        cu = {"Tên Task": "Rà soát dữ liệu", "Nhân Sự Thực Hiện": "Nam", "Hạn": "26/07"}
+        moi = {"Tên Task": "Rà soát dữ liệu HK1", "Nhân Sự Thực Hiện": "Nam",
+               "Hạn": "30/07"}
+        ket_qua = ct.match_renames([self._doi("removed", "Rà soát dữ liệu", cu),
+                                    self._doi("added", "Rà soát dữ liệu HK1", moi)])
+        self.assertEqual(ket_qua[0].kind, "renamed")
+        self.assertIn(["Hạn", "26/07", "30/07"], ket_qua[0].fields)
+
+
 if __name__ == "__main__":
     unittest.main()
