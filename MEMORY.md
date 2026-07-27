@@ -109,5 +109,7 @@ _Cập nhật gần nhất: 2026-07-26._
   chỉ còn là fallback.
 - Cập nhật lại `README.md` mục 5 cho khớp logic hiện tại (chưa làm — ngoài phạm vi yêu cầu).
 - Tùy chọn: trừ **ngày lễ** khi tính giờ `/tai`; liệt kê tên task dưới mỗi người trong `/tai`.
-- Chưa có test tự động — cân nhắc thêm pytest cho `report_generator`/`sheets_client`
-  (thuần logic, dễ test với dữ liệu giả).
+- **Đã có test tự động (unittest stdlib)** cho ba module logic: `state_store.py`,
+  `change_tracker.py`, `change_reporter.py` (65 test, chạy `python -m unittest discover`).
+  **Còn thiếu test** cho `report_generator.py` và `sheets_client.py` (dễ thêm với dữ liệu giả
+  khi cần).

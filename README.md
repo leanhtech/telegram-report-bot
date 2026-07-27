@@ -131,6 +131,9 @@ sudo systemctl enable --now report-bot
 | /trehan | Task trễ hạn / đến hạn hôm nay |
 | /tuan | Tổng kết tuần theo dự án và nhân sự |
 | /lammoi | Đọc lại dữ liệu mới nhất từ sheet |
+| /moi | Thay đổi trên các sheet kế hoạch kể từ bản tin gần nhất |
+| /nguon | Quản lý các file sheet đang được theo dõi (chỉ admin) |
+| /theodoi bat \| tat | Bật/tắt theo dõi thay đổi (chỉ admin) |
 | /chatid | Hiện chat_id, topic_id, user_id hiện tại |
 | /cauhinh | (Admin) Xem cấu hình lịch gửi |
 | /cauhinh set <khóa> <giá trị> | (Admin) Đổi cấu hình, tự nạp lại lịch |

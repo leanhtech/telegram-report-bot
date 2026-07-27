@@ -168,7 +168,19 @@ lamMoi/lammoi, chatid, cauhinh`. Trong chat riêng còn có trả lời tự nhi
 
 ## 11. Kiểm thử / xác minh
 
-**Chưa có test suite tự động.** Máy dev **không cài** `gspread`/`pytz`/`telegram`, nên:
+**Bộ test tự động (`unittest` stdlib):** Ba module logic (`state_store.py`,
+`change_tracker.py`, `change_reporter.py`) **không import** `gspread`/`pytz`/`telegram`
+nên có thể test trên máy dev. Chạy:
+
+```
+python -m unittest discover -s tests -t .
+```
+
+Kết quả: **65 test** chạy được. Xem chi tiết ở các file `tests/test_*.py`.
+
+**Phần không test tự động:** `sheets_client.py` và `bot.py` phụ thuộc vào
+`gspread`/`telegram` nên không test offline được. Với phần này, máy dev **không cài**
+`gspread`/`pytz`/`telegram`, nên:
 - Kiểm tra cú pháp: `python -m py_compile src/*.py`.
 - Kiểm tra logic: viết script stub các module ngoài (inject `types.ModuleType` cho
   `gspread`, `google.*`, `pytz`, `telegram*`) rồi monkeypatch `sheets.fetch_tasks` /
@@ -182,6 +194,15 @@ lamMoi/lammoi, chatid, cauhinh`. Trong chat riêng còn có trả lời tự nhi
 - `config.yaml` chứa `bot_token`, `spreadsheet_id`; `credentials.json` là key service
   account. **Không** commit, **không** dán nội dung secret vào tài liệu/PR/chat.
 - Chỉ `admin_ids` mới `/cauhinh`. Bot chỉ cần quyền Viewer trên sheet.
+
+## 13. Bẫy cần nhớ (checklist khi sửa)
+
+1. Ngày trong tuần: PTB `0=CN`. Dùng `[1..5]` cho T2–T6.
+2. Thêm chỗ gửi báo cáo team/workload → truyền `parse_mode=ParseMode.HTML` + escape nội dung.
+3. `config.yaml` mất comment sau `/cauhinh set` (safe_dump).
+4. Đọc dropdown là best-effort; luôn giữ nhánh fallback `team.members`.
+5. `.claude/launch.json` hiện trỏ tới **dự án khác** (kiosk-dvc/uvicorn) — không liên quan bot này, bỏ qua.
+6. `README.md` mục "5. Logic sinh báo cáo" mô tả logic **cũ** (trước các thay đổi gần đây) — ưu tiên file này.
 
 ## 14. Theo dõi thay đổi trên sheet kế hoạch (`watch.*`)
 
@@ -210,12 +231,3 @@ phạm vi này.
 - **Chưa có ảnh chụp thì không báo gì** (bootstrap). Bỏ quy tắc này là dội hàng trăm tin.
 - `watch.active_days` dùng đúng quy ước PTB `0 = Chủ Nhật`.
 - Tin của chức năng này là HTML → luôn `parse_mode=ParseMode.HTML` + `_esc`.
-
-## 13. Bẫy cần nhớ (checklist khi sửa)
-
-1. Ngày trong tuần: PTB `0=CN`. Dùng `[1..5]` cho T2–T6.
-2. Thêm chỗ gửi báo cáo team/workload → truyền `parse_mode=ParseMode.HTML` + escape nội dung.
-3. `config.yaml` mất comment sau `/cauhinh set` (safe_dump).
-4. Đọc dropdown là best-effort; luôn giữ nhánh fallback `team.members`.
-5. `.claude/launch.json` hiện trỏ tới **dự án khác** (kiosk-dvc/uvicorn) — không liên quan bot này, bỏ qua.
-6. `README.md` mục "5. Logic sinh báo cáo" mô tả logic **cũ** (trước các thay đổi gần đây) — ưu tiên file này.
