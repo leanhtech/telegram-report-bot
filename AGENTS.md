@@ -168,7 +168,19 @@ lamMoi/lammoi, chatid, cauhinh`. Trong chat riêng còn có trả lời tự nhi
 
 ## 11. Kiểm thử / xác minh
 
-**Chưa có test suite tự động.** Máy dev **không cài** `gspread`/`pytz`/`telegram`, nên:
+**Bộ test tự động (`unittest` stdlib):** Ba module logic (`state_store.py`,
+`change_tracker.py`, `change_reporter.py`) **không import** `gspread`/`pytz`/`telegram`
+nên có thể test trên máy dev. Chạy:
+
+```
+python -m unittest discover -s tests -t .
+```
+
+Kết quả: **65 test** chạy được. Xem chi tiết ở các file `tests/test_*.py`.
+
+**Phần không test tự động:** `sheets_client.py` và `bot.py` phụ thuộc vào
+`gspread`/`telegram` nên không test offline được. Với phần này, máy dev **không cài**
+`gspread`/`pytz`/`telegram`, nên:
 - Kiểm tra cú pháp: `python -m py_compile src/*.py`.
 - Kiểm tra logic: viết script stub các module ngoài (inject `types.ModuleType` cho
   `gspread`, `google.*`, `pytz`, `telegram*`) rồi monkeypatch `sheets.fetch_tasks` /
@@ -191,3 +203,42 @@ lamMoi/lammoi, chatid, cauhinh`. Trong chat riêng còn có trả lời tự nhi
 4. Đọc dropdown là best-effort; luôn giữ nhánh fallback `team.members`.
 5. `.claude/launch.json` hiện trỏ tới **dự án khác** (kiosk-dvc/uvicorn) — không liên quan bot này, bỏ qua.
 6. `README.md` mục "5. Logic sinh báo cáo" mô tả logic **cũ** (trước các thay đổi gần đây) — ưu tiên file này.
+
+## 14. Theo dõi thay đổi trên sheet kế hoạch (`watch.*`)
+
+Nhánh **độc lập** với báo cáo: theo dõi các file sheet kế hoạch do người khác cập nhật,
+báo dòng mới / dòng bị xoá / ô bị sửa. Sheet "Task Đã Điều Phối" **không** nằm trong
+phạm vi này.
+
+- `change_tracker.py` — nhận diện cột (`detect_mode` → chế độ `task`/`generic`), khoá
+  định danh (`make_key`), chụp ảnh (`build_snapshot`), so sánh (`diff_snapshots`), dò đổi
+  tên (`match_renames`), phân loại (`classify`), lọc (`passes_filters`), chia bản tin
+  theo đích (`for_digest`), khung giờ (`in_active_window`, `is_first_scan_of_day`).
+- `change_reporter.py` — dựng HTML (`format_instant`, `format_digest`, `format_overflow`).
+- `state_store.py` — `state/watch_state.json`, ghi atomic, chịu được file hỏng.
+- `sheets_client.fetch_rows/list_worksheets/service_account_email` — đọc file bất kỳ.
+- `bot.py` — `job_watch_scan` (run_repeating), `job_watch_digest` (run_daily),
+  `/moi`, `/nguon`, `/theodoi`.
+
+**Ba module đầu KHÔNG được import gspread/telegram/pytz** — đó là điều kiện để
+`python -m unittest discover -s tests -t .` chạy được trên máy dev.
+
+Điểm dễ vấp:
+- **Khoá định danh không theo vị trí dòng** → sort lại sheet không sinh thông báo. Đừng
+  "sửa" thành số dòng.
+- **Bộ lọc chỉ chặn ở khâu gửi**, ảnh chụp luôn lưu toàn bộ sheet. Lọc từ đầu sẽ khiến
+  việc mở rộng bộ lọc bị hiểu nhầm thành hàng loạt "dòng mới".
+- **Chưa có ảnh chụp thì không báo gì** (bootstrap). Bỏ quy tắc này là dội hàng trăm tin.
+- **Bản tin gom phải tính theo TỪNG đích, không dùng một cờ chung.** `instant_sent` chỉ
+  cho biết thay đổi đã được đẩy tin báo ngay hay chưa; đích cấu hình `send: [digest]`
+  **không hề nhận** tin báo ngay nên bản tin của nó phải chứa **tất cả** — đó là việc của
+  `ct.for_digest(changes, "instant" in nhan)`. Nếu quay lại lọc chung
+  `[c for c in cho if not c.instant_sent]` trước khi vào vòng lặp đích, các đích chỉ nhận
+  bản tin sẽ **mất trắng** mọi task mới / đổi hạn / đổi người.
+- **Lô "quá ngưỡng" (`max_instant_items`) chỉ được gửi tin tóm tắt, nên phải giữ
+  `instant_sent = False`** để chi tiết còn chảy vào bản tin. Ngưỡng này so sánh ở **đúng
+  một chỗ**: `job_watch_scan`. Đừng thêm phép so thứ hai trong `_send_watch`.
+- `watch.active_days` dùng đúng quy ước PTB `0 = Chủ Nhật`.
+- Tin của chức năng này là HTML → luôn `parse_mode=ParseMode.HTML` + `_esc`.
+- `dtime(hh, mm)` phải nằm **trong** `try` khi đăng ký lịch: `"08:99"` parse ra int hợp lệ
+  rồi mới ném `ValueError`, mà `register_jobs` chạy sau khi đã gỡ hết job cũ.

@@ -4,6 +4,8 @@ config.yaml
 # credentials.json là key service account Google
 credentials.json
 .env
+# Trạng thái theo dõi thay đổi (ảnh chụp sheet) — không commit
+state/
 
 # Cấu hình agent/IDE cục bộ
 .claude/

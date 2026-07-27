@@ -55,3 +55,32 @@ team:
   # Fallback cho /tai khi không đọc được dropdown cột 'Nhân Sự Thực Hiện'.
   # Điền qua Telegram: /cauhinh set team.members Tên A, Tên B, Tên C
   members: []
+
+# ------------------------------------------------------------------
+# Theo dõi thay đổi trên các file sheet KẾ HOẠCH (khác sheet báo cáo ở trên).
+# Thêm/bớt nguồn ngay trên Telegram bằng lệnh /nguon — không cần sửa file này.
+# ------------------------------------------------------------------
+watch:
+  enabled: false                    # bật bằng /theodoi bat
+  poll_interval_minutes: 10
+  # LƯU Ý: cùng quy ước với schedules ở trên — 0=Chủ Nhật ... 6=Thứ Bảy.
+  # => [1, 2, 3, 4, 5] = Thứ Hai -> Thứ Sáu.
+  active_days: [1, 2, 3, 4, 5]
+  active_hours: '08:00-18:00'       # ngoài khung giờ không quét
+  digest_times: ['08:30', '16:30']  # giờ gửi bản tin gom
+  max_instant_items: 15             # quá ngưỡng thì gửi tin tóm tắt
+  state_file: state/watch_state.json
+  instant_kinds: [added, removed]   # loại thay đổi báo ngay
+  instant_fields: [due, assignee]   # trường đổi thì báo ngay
+  sources: []                       # do /nguon them điền vào
+  targets:
+    - chat_id: 123456789            # chat riêng: nhận đủ
+      send: [instant, digest]
+    - chat_id: -1000000000000       # nhóm team: chỉ bản tin
+      topic_id: 0
+      send: [digest]
+  filters:                          # trống = không lọc
+    sources: []
+    projects: []                    # chỉ có tác dụng ở chế độ task
+    assignees: []                   # chỉ có tác dụng ở chế độ task
+    keywords: []                    # khớp mọi ô — dùng được cho chế độ generic

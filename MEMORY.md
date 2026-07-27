@@ -3,7 +3,7 @@
 Ghi lại **quyết định, bối cảnh và bẫy** không nhìn thấy được từ code, để AI/agent
 (và người) nắm nhanh "tại sao". Tra cứu "cái gì / như thế nào" ở [AGENTS.md](AGENTS.md).
 
-_Cập nhật gần nhất: 2026-07-21._
+_Cập nhật gần nhất: 2026-07-26._
 
 ## Hiện trạng (2026-07-21)
 
@@ -70,6 +70,40 @@ _Cập nhật gần nhất: 2026-07-21._
    fail. `_parse_value(raw, key)` nhận list khi khóa ∈ `LIST_KEYS`, có dấu phẩy, hoặc
    bọc `[ ]`; `null` → `[]`. Chỉ `schedules.*` mới nạp lại lịch; `team.members` nạp lại roster.
 
+9. **Theo dõi thay đổi trên sheet kế hoạch (`watch.*`).** Nhu cầu: hằng ngày phải mở
+   thủ công các file kế hoạch do người khác cập nhật để dò nội dung phát sinh.
+   - **Chọn snapshot + diff, không chọn Apps Script webhook.** Webhook cần cài script vào
+     từng file (phải có quyền sửa) và bot phải mở cổng HTTP public — chi phí vận hành lớn
+     hơn giá trị. Drive Revisions API bị loại vì không diff được cấp ô.
+   - **Tách hẳn khỏi luồng báo cáo.** Sheet "Task Đã Điều Phối" do chính chủ cập nhật nên
+     không cần theo dõi; `fetch_tasks()` và `google_sheets.*` giữ nguyên, chỉ **thêm**
+     `fetch_rows()`.
+   - **Khoá định danh không theo vị trí dòng** (Jira → STT → vân tay → nhãn dòng) để sort
+     lại sheet không sinh thông báo. Kèm bước dò đổi tên, nếu không việc sửa tên sẽ bị báo
+     nhầm thành xoá + thêm mới.
+   - **Mỗi file một kiểu** → hai chế độ: `task` (nhận ra ý nghĩa cột) và `generic` (báo
+     theo tên cột nguyên văn). Không ép người dùng khai cấu hình trước mới dùng được.
+   - **Bộ lọc chỉ chặn ở khâu gửi**, ảnh chụp lưu toàn bộ — nếu lọc từ đầu, hôm sau mở
+     rộng bộ lọc sẽ có hàng trăm dòng cũ bị hiểu nhầm là mới.
+   - **Ba module logic không import gspread/telegram/pytz** → repo lần đầu có test tự động
+     chạy được trên máy dev (`python -m unittest discover -s tests -t .`).
+   - **Lần quét đầu của ngày ép mọi thay đổi sang loại "gom"** để thay đổi qua đêm đi
+     chung một bản tin sáng thay vì dội tin lúc mở khung giờ.
+
+10. **Bản tin gom phải tính theo từng đích (`ct.for_digest`).** Bản đầu dùng **một cờ
+    chung** `instant_sent` rồi lọc `[c for c in cho if not c.instant_sent]` trước khi vào
+    vòng lặp đích. Review toàn nhánh phát hiện: đích cấu hình `send: [digest]` (đúng cấu
+    hình mẫu "nhóm team chỉ nhận bản tin") **không nhận tin báo ngay**, mà bản tin lại đã
+    loại sẵn những thay đổi đó → **mất trắng** mọi task mới / đổi hạn / đổi người, im lặng
+    và vĩnh viễn. Nay `_send_watch` hỏi `ct.for_digest(changes, "instant" in nhan)` cho
+    **từng đích**: đích không nhận báo ngay thì bản tin chứa tất cả.
+    Cùng gốc là lỗi thứ hai: lô **quá `max_instant_items`** chỉ được gửi tin tóm tắt nhưng
+    vẫn bị đánh dấu đã báo → chi tiết biến mất khỏi bản tin và bị dọn khỏi hàng chờ. Nay
+    lô quá ngưỡng giữ `instant_sent = False`, và ngưỡng chỉ so ở **một chỗ**
+    (`job_watch_scan`).
+    **Vì sao nhớ:** cả hai đều vô hình với test đơn vị (chỉ tồn tại ở `bot.py` — phần
+    không test tự động được) và chỉ lộ ra khi nhìn toàn hệ thống. Đừng gộp ngược về cờ chung.
+
 ## Bẫy đã biết (đừng vấp lại)
 
 - **Ngày PTB `0=Chủ Nhật`** (mục 1). Dùng `[1..5]` = T2–T6.
@@ -78,6 +112,11 @@ _Cập nhật gần nhất: 2026-07-21._
 - **`.claude/launch.json` trỏ dự án khác** (kiosk-dvc/uvicorn) — không liên quan.
 - **`README.md` mục "Logic sinh báo cáo" đã cũ** — tin theo AGENTS.md.
 - Máy dev **không cài** gspread/pytz/telegram → test bằng stub module + monkeypatch.
+- **`watch.active_days` cũng theo quy ước `0 = Chủ Nhật`** như `schedules.*`.
+- **Mất thư mục `state/`** (quên mount) → bot chụp lại từ đầu và im lặng, không dội tin —
+  đúng thiết kế, đừng "sửa".
+- **Bản tin gom tính theo TỪNG đích** (`ct.for_digest`), không được lọc chung bằng
+  `instant_sent` trước vòng lặp đích — xem mục 10.
 
 ## Việc mở / đề xuất tiếp theo
 
@@ -86,5 +125,7 @@ _Cập nhật gần nhất: 2026-07-21._
   chỉ còn là fallback.
 - Cập nhật lại `README.md` mục 5 cho khớp logic hiện tại (chưa làm — ngoài phạm vi yêu cầu).
 - Tùy chọn: trừ **ngày lễ** khi tính giờ `/tai`; liệt kê tên task dưới mỗi người trong `/tai`.
-- Chưa có test tự động — cân nhắc thêm pytest cho `report_generator`/`sheets_client`
-  (thuần logic, dễ test với dữ liệu giả).
+- **Đã có test tự động (unittest stdlib)** cho ba module logic: `state_store.py`,
+  `change_tracker.py`, `change_reporter.py` (65 test, chạy `python -m unittest discover`).
+  **Còn thiếu test** cho `report_generator.py` và `sheets_client.py` (dễ thêm với dữ liệu giả
+  khi cần).
