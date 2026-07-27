@@ -253,7 +253,8 @@ def diff_snapshots(old_state: Dict[str, Any], new_state: Dict[str, Any],
 # Dò đổi tên: ghép cặp một dòng "mất" với một dòng "thêm"
 # ------------------------------------------------------------------
 RENAME_CELLS_RATIO = 0.7   # tỉ lệ ô giống nhau tối thiểu
-RENAME_LABEL_RATIO = 0.6   # độ giống của nhãn khi các ô khác trùng khớp
+RENAME_LABEL_RATIO = 0.6   # độ giống của nhãn khi các ô khác đủ giống nhau
+RENAME_OTHERS_RATIO = 0.5   # tỉ lệ tối thiểu các ô ngoài nhãn còn trùng nhau
 
 
 def _cells_ratio(a: Dict[str, str], b: Dict[str, str]) -> float:
@@ -290,10 +291,10 @@ def match_renames(changes: List[Change]) -> List[Change]:
             ty_le_o = _cells_ratio(cu.cells, moi.cells)
             ty_le_nhan = SequenceMatcher(None, (cu.label or "").lower(),
                                          (moi.label or "").lower()).ratio()
-            khac_giong_het = _cells_ratio(_drop_label(cu.cells, cu.label),
-                                          _drop_label(moi.cells, moi.label))
+            ty_le_o_khac = _cells_ratio(_drop_label(cu.cells, cu.label),
+                                        _drop_label(moi.cells, moi.label))
             if ty_le_o >= RENAME_CELLS_RATIO or (
-                    ty_le_nhan >= RENAME_LABEL_RATIO and khac_giong_het >= 0.5):
+                    ty_le_nhan >= RENAME_LABEL_RATIO and ty_le_o_khac >= RENAME_OTHERS_RATIO):
                 ung_vien.append((max(ty_le_o, ty_le_nhan), cu, moi))
 
     ung_vien.sort(key=lambda x: x[0], reverse=True)
