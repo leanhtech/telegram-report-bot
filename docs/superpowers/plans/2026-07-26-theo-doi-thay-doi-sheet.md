@@ -1758,29 +1758,32 @@ def _scan_source(src: dict, state: dict, now):
     """
     sid = str(src.get("id") or "").strip()
     truoc = (state.get("sources") or {}).get(sid) or {}
+    # Bọc trọn cả khâu đọc lẫn khâu dựng/so ảnh chụp: một sheet dữ liệu dị
+    # thường cũng không được phép làm chết vòng quét của các nguồn còn lại.
+    # Lỗi -> không đụng vào state, nên ảnh chụp không tiến và vòng sau thử lại.
     try:
         headers, rows = sheets.fetch_rows(src.get("spreadsheet_id"),
                                           src.get("worksheet_name") or "")
-    except Exception as e:   # một nguồn hỏng không được làm chết cả job
+        mode, field_map = ct.detect_mode(headers, src.get("columns"))
+        snapshot = ct.build_snapshot(rows, headers, field_map, mode,
+                                     src.get("key_column", "") or "")
+        # Giữ nguyên error/fail_count của lần trước: việc xoá cờ lỗi (và báo "đã
+        # khôi phục") là của _bao_loi_nguon, không phải của hàm này.
+        hien_tai = {
+            "mode": mode, "headers": headers, "field_map": field_map,
+            "snapshot": snapshot, "scanned_at": now.isoformat(),
+            "rows": len(snapshot), "error": truoc.get("error"),
+            "fail_count": truoc.get("fail_count", 0),
+        }
+
+        changes = []
+        if truoc.get("snapshot"):
+            changes = ct.match_renames(ct.diff_snapshots(truoc, hien_tai, sid))
+        else:
+            log.info("Nguồn %s: chụp ảnh lần đầu (%d dòng), chưa báo gì",
+                     sid, len(snapshot))
+    except Exception as e:
         return [], e
-
-    mode, field_map = ct.detect_mode(headers, src.get("columns"))
-    snapshot = ct.build_snapshot(rows, headers, field_map, mode,
-                                 src.get("key_column", "") or "")
-    # Giữ nguyên error/fail_count của lần trước: việc xoá cờ lỗi (và báo "đã
-    # khôi phục") là của _bao_loi_nguon, không phải của hàm này.
-    hien_tai = {
-        "mode": mode, "headers": headers, "field_map": field_map,
-        "snapshot": snapshot, "scanned_at": now.isoformat(),
-        "rows": len(snapshot), "error": truoc.get("error"),
-        "fail_count": truoc.get("fail_count", 0),
-    }
-
-    changes = []
-    if truoc.get("snapshot"):
-        changes = ct.match_renames(ct.diff_snapshots(truoc, hien_tai, sid))
-    else:
-        log.info("Nguồn %s: chụp ảnh lần đầu (%d dòng), chưa báo gì", sid, len(snapshot))
 
     state.setdefault("sources", {})[sid] = hien_tai
     return changes, None
@@ -1883,14 +1886,22 @@ async def job_watch_scan(context: ContextTypes.DEFAULT_TYPE):
             field_maps.get(ch.source_id))
         ch.instant_sent = (loai == "instant")
 
+    # Gửi trước, lưu sau: nếu gửi hỏng thì hạ cờ instant_sent để các thay đổi đó
+    # rơi vào bản tin gom, không biến mất trong im lặng. Ảnh chụp vẫn được lưu —
+    # báo trùng một lần còn hơn mất tin.
+    ngay = [c for c in moi if c.instant_sent]
+    if ngay:
+        try:
+            await _send_watch(context, "instant", ngay, field_maps, now)
+            log.info("Đã báo ngay %d thay đổi", len(ngay))
+        except Exception as e:
+            log.warning("Gửi tin báo ngay thất bại, chuyển sang bản tin gom: %s", e)
+            for ch in ngay:
+                ch.instant_sent = False
+
     state.setdefault("pending", []).extend(c.to_dict() for c in moi)
     state["last_scan_at"] = now.isoformat()
     state_store.save(watch_state_path(), state)
-
-    ngay = [c for c in moi if c.instant_sent]
-    if ngay:
-        await _send_watch(context, "instant", ngay, field_maps, now)
-        log.info("Đã báo ngay %d thay đổi", len(ngay))
 ```
 
 - [ ] **Step 3: Đăng ký job trong `register_jobs`**
