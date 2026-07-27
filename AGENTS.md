@@ -218,7 +218,8 @@ phạm vi này.
 - `state_store.py` — `state/watch_state.json`, ghi atomic, chịu được file hỏng.
 - `sheets_client.fetch_rows/list_worksheets/service_account_email` — đọc file bất kỳ.
 - `bot.py` — `job_watch_scan` (run_repeating), `job_watch_digest` (run_daily),
-  `/moi`, `/nguon`, `/theodoi`.
+  `/moi`, `/theodoi`, và `/nguon` (tách thành `_nguon_liet_ke/_them/_tab/_cot/_khoa/_xoa`,
+  `cmd_nguon` chỉ định tuyến).
 
 **Ba module đầu KHÔNG được import gspread/telegram/pytz** — đó là điều kiện để
 `python -m unittest discover -s tests -t .` chạy được trên máy dev.
@@ -242,3 +243,7 @@ phạm vi này.
 - Tin của chức năng này là HTML → luôn `parse_mode=ParseMode.HTML` + `_esc`.
 - `dtime(hh, mm)` phải nằm **trong** `try` khi đăng ký lịch: `"08:99"` parse ra int hợp lệ
   rồi mới ném `ValueError`, mà `register_jobs` chạy sau khi đã gỡ hết job cũ.
+- **Đổi `columns` / `key_column` / tab của một nguồn đều phải gọi `_bo_anh_chup`.**
+  Ba thứ này đổi cách sinh khoá định danh dòng; giữ ảnh chụp cũ là lần quét sau dội một
+  loạt thêm/xoá giả. Lệnh `/nguon cot` và `/nguon khoa` làm việc đó tự động — đó là lý do
+  chúng tồn tại thay vì để người dùng sửa `config.yaml`.

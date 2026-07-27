@@ -178,6 +178,11 @@ Các lệnh liên quan:
 
 - `/nguon` — xem các file đang theo dõi, quét lần cuối lúc nào, có lỗi không
 - `/nguon tab <id>` — xem các tab; `/nguon tab <id> <tên tab>` để đổi
+- `/nguon cot <id>` — xem ánh xạ cột; khai bằng `/nguon cot <id> <Tên cột> = <ý nghĩa>`
+  (ý nghĩa: `name`, `assignee`, `due`, `status`, `project`...). Khai đủ thì bot chuyển từ
+  chế độ bảng chung sang chế độ task: đổi hạn và đổi người phụ trách được **báo ngay**
+  thay vì chờ tới bản tin.
+- `/nguon khoa <id> <Tên cột>` — chọn cột làm khoá nhận diện dòng (VD cột "Mã")
 - `/nguon xoa <id>` — bỏ theo dõi
 - `/moi` — xem các thay đổi kể từ bản tin gần nhất
 

@@ -433,6 +433,8 @@ Lệnh cấu hình (chỉ admin):
 /nguon - Các file sheet kế hoạch đang được theo dõi
 /nguon them <link> | Tên hiển thị | Tên tab - Thêm file để theo dõi thay đổi
 /nguon tab <id> [tên tab] - Xem hoặc đổi tab đang theo dõi
+/nguon cot <id> - Xem ánh xạ cột; khai: /nguon cot <id> <Tên cột> = <ý nghĩa>
+/nguon khoa <id> <Tên cột> - Đặt cột làm khoá nhận diện dòng
 /nguon xoa <id> - Bỏ theo dõi một file
 /theodoi bat | tat - Bật/tắt theo dõi thay đổi
   Cấu hình thêm: /cauhinh set watch.poll_interval_minutes 10
@@ -525,6 +527,7 @@ NGUON_CU_PHAP = (
     "/nguon them <link> | Tên hiển thị | Tên tab\n"
     "/nguon tab <id> [tên tab]\n"
     "/nguon cot <id> [<Tên cột> = <ý nghĩa> | xoa <Tên cột>]\n"
+    "/nguon khoa <id> [<Tên cột> | xoa]\n"
     "/nguon xoa <id>"
 )
 
@@ -671,9 +674,9 @@ async def _nguon_them(update: Update, sources: list, state: dict, args: list):
     if mode == "generic":
         parts.append("")
         parts.append(
-            "Đang chạy chế độ bảng chung — bot báo theo tên cột nguyên văn. "
-            "Muốn báo giàu nghĩa hơn thì khai ánh xạ cột trong config.yaml "
-            "(watch.sources -> columns).")
+            "Đang chạy chế độ bảng chung — bot báo theo tên cột nguyên văn, và "
+            "đổi hạn / đổi người sẽ KHÔNG được báo ngay mà chỉ vào bản tin gom.")
+        parts.append("Muốn báo giàu nghĩa hơn: /nguon cot %s" % sid)
     parts.append("")
     parts.append("Thay đổi từ giờ trở đi sẽ được báo.")
     if not cfg.get("watch.enabled", False):
@@ -811,6 +814,64 @@ async def _nguon_cot(update: Update, sources: list, state: dict, args: list):
     await update.message.reply_text("\n".join(dong))
 
 
+async def _nguon_khoa(update: Update, sources: list, state: dict, args: list):
+    """Xem / đặt / bỏ cột khoá định danh của một nguồn.
+
+    Cột khoá quyết định 'dòng nào là dòng nào' qua các lần quét, nên đổi nó cũng
+    phải bỏ ảnh chụp cũ như khi đổi ánh xạ cột.
+    """
+    sid = args[1]
+    src = _tim_nguon(sources, sid)
+    if not src:
+        await update.message.reply_text("Không có nguồn id “%s”." % sid)
+        return
+
+    phan = " ".join(args[2:]).strip()
+    hien_tai = src.get("key_column") or ""
+
+    # --- Chỉ xem ---
+    if not phan:
+        await update.message.reply_text(
+            "Cột khoá của “%s”: %s\n\n"
+            "Đặt: /nguon khoa %s <Tên cột>\n"
+            "Bỏ:  /nguon khoa %s xoa"
+            % (src.get("name") or sid, hien_tai or "(chưa đặt)", sid, sid))
+        return
+
+    # --- Bỏ cột khoá ---
+    if phan.lower() == "xoa":
+        if not hien_tai:
+            await update.message.reply_text("Nguồn này chưa đặt cột khoá.")
+            return
+        src["key_column"] = ""
+        cfg.set("watch.sources", sources)
+        _bo_anh_chup(state, sid)
+        await update.message.reply_text(
+            "Đã bỏ cột khoá của “%s”. Bot quay lại tự suy khoá định danh.\n"
+            "Sẽ chụp lại ảnh ở lần quét tới (không báo tin giả)."
+            % (src.get("name") or sid))
+        return
+
+    # --- Đặt cột khoá ---
+    headers = await _doc_headers(update, src)
+    if headers is None:
+        return
+    cot_goc = ct.match_column(headers, phan)
+    if not cot_goc:
+        await update.message.reply_text(
+            "Sheet không có cột “%s”.\nCác cột thật: %s" % (phan, ", ".join(headers)))
+        return
+
+    src["key_column"] = cot_goc
+    cfg.set("watch.sources", sources)
+    _bo_anh_chup(state, sid)
+    await update.message.reply_text(
+        "Đã đặt cột khoá của “%s” = “%s”.\n"
+        "Từ giờ mỗi dòng được nhận diện theo cột này.\n"
+        "Sẽ chụp lại ảnh ở lần quét tới (không báo tin giả)."
+        % (src.get("name") or sid, cot_goc))
+
+
 async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quản lý danh sách file sheet đang được theo dõi (chỉ admin)."""
     if not is_admin(update):
@@ -834,6 +895,9 @@ async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if lenh == "cot" and len(args) >= 2:
         await _nguon_cot(update, sources, state, args)
+        return
+    if lenh == "khoa" and len(args) >= 2:
+        await _nguon_khoa(update, sources, state, args)
         return
     if lenh == "xoa" and len(args) >= 2:
         await _nguon_xoa(update, sources, state, args)
