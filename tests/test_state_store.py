@@ -54,6 +54,30 @@ class TestStateStore(unittest.TestCase):
         # giữ lại các mục MỚI nhất
         self.assertEqual(again["pending"][-1]["i"], state_store.MAX_PENDING + 49)
 
+    def test_sources_sai_kieu_thi_ve_dict_rong(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"version": state_store.STATE_VERSION, "sources": "oops",
+                      "pending": [{"i": 1}]}, f)
+        state = state_store.load(self.path)
+        self.assertEqual(state["sources"], {})
+        self.assertEqual(state["pending"], [{"i": 1}])
+
+    def test_pending_sai_kieu_thi_ve_danh_sach_rong(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"version": state_store.STATE_VERSION,
+                      "sources": {"vnedu": {"snapshot": {}}}, "pending": "oops"}, f)
+        state = state_store.load(self.path)
+        self.assertEqual(state["pending"], [])
+        self.assertEqual(state["sources"], {"vnedu": {"snapshot": {}}})
+
+    def test_ca_hai_truong_sai_kieu_khong_lam_sap_bot(self):
+        with open(self.path, "w", encoding="utf-8") as f:
+            json.dump({"version": state_store.STATE_VERSION,
+                      "sources": "oops", "pending": "oops"}, f)
+        state = state_store.load(self.path)
+        self.assertEqual(state["sources"], {})
+        self.assertEqual(state["pending"], [])
+
     def test_tu_tao_thu_muc_neu_chua_co(self):
         nested = os.path.join(self.dir, "state", "watch_state.json")
         state_store.save(nested, state_store.default_state())

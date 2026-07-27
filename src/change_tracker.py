@@ -383,6 +383,18 @@ def passes_filters(change: Change, filters: Optional[Dict[str, Any]],
     return True
 
 
+def for_digest(changes: List[Change], target_gets_instant: bool) -> Tuple[List[Change], int]:
+    """Các thay đổi cần đưa vào bản tin của một đích + số mục đích đó đã nhận trực tiếp.
+
+    Đích có nhận tin báo ngay thì bản tin chỉ nhắc lại phần chưa báo. Đích chỉ
+    nhận bản tin thì phải thấy TẤT CẢ, vì nó không hề nhận tin báo ngay nào.
+    """
+    if not target_gets_instant:
+        return list(changes), 0
+    con_lai = [c for c in changes if not c.instant_sent]
+    return con_lai, len(changes) - len(con_lai)
+
+
 def in_active_window(now: datetime, active_days: Optional[List[int]] = None,
                      active_hours: str = "08:00-18:00") -> bool:
     """Có quét vào thời điểm `now` không.

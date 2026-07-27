@@ -349,6 +349,32 @@ class TestKhungGio(unittest.TestCase):
                                             [1, 2, 3, 4, 5], "linh tinh"))
 
 
+class TestChiaBanTin(unittest.TestCase):
+    def _doi(self, instant_sent):
+        return ct.Change(source_id="vnedu", kind="added", label="A",
+                         instant_sent=instant_sent)
+
+    def test_dich_chi_nhan_ban_tin_thay_tat_ca(self):
+        changes = [self._doi(True), self._doi(False)]
+        pool, already = ct.for_digest(changes, target_gets_instant=False)
+        self.assertEqual(pool, changes)
+        self.assertEqual(already, 0)
+
+    def test_dich_co_nhan_bao_ngay_chi_thay_phan_chua_bao(self):
+        da_bao, chua_bao = self._doi(True), self._doi(False)
+        pool, already = ct.for_digest([da_bao, chua_bao], target_gets_instant=True)
+        self.assertEqual(pool, [chua_bao])
+        self.assertEqual(already, 1)
+
+    def test_danh_sach_rong(self):
+        pool, already = ct.for_digest([], target_gets_instant=True)
+        self.assertEqual(pool, [])
+        self.assertEqual(already, 0)
+        pool, already = ct.for_digest([], target_gets_instant=False)
+        self.assertEqual(pool, [])
+        self.assertEqual(already, 0)
+
+
 class TestLanQuetDauNgay(unittest.TestCase):
     def test_lan_quet_dau_tuyet_doi_khong_tinh(self):
         self.assertFalse(ct.is_first_scan_of_day(None, datetime(2026, 7, 27, 8, 0)))

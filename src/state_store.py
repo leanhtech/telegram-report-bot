@@ -47,6 +47,17 @@ def load(path: str) -> Dict[str, Any]:
 
     base = default_state()
     base.update(data)
+
+    # File có thể bị sửa tay sai kiểu (VD "sources" thành chuỗi) — vẫn qua
+    # được kiểm tra version ở trên. Nếu không chặn ở đây, chỗ dùng state sau
+    # này (VD state.setdefault("sources", {})[sid] = ...) sẽ ném TypeError từ
+    # ngoài phạm vi try/except của từng nguồn, làm hỏng cả lần quét (spec mục 10).
+    if not isinstance(base.get("sources"), dict):
+        log.warning("Trường 'sources' trong file trạng thái sai kiểu, dùng giá trị mặc định")
+        base["sources"] = {}
+    if not isinstance(base.get("pending"), list):
+        log.warning("Trường 'pending' trong file trạng thái sai kiểu, dùng giá trị mặc định")
+        base["pending"] = []
     return base
 
 

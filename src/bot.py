@@ -212,25 +212,37 @@ async def _nhan_admin(context, text: str) -> None:
 
 
 async def _send_watch(context, mode: str, changes, field_maps, now,
-                      since_text: str = "", already: int = 0) -> None:
-    """Gửi thay đổi tới các đích đã cấu hình, mỗi đích một bộ lọc riêng."""
+                      since_text: str = "") -> None:
+    """Gửi thay đổi tới các đích đã cấu hình, mỗi đích một bộ lọc riêng.
+
+    "overflow" được xét đích y hệt "instant" (chỉ gửi cho đích có "instant"
+    trong `send`) — nó là hình thức tóm tắt của cùng một đợt báo ngay.
+    Với "digest", số mục "đã báo ngay" được tính RIÊNG cho từng đích qua
+    ct.for_digest — đích chỉ nhận bản tin (không có "instant" trong `send`)
+    phải thấy TẤT CẢ thay đổi, không phải phần dư sau khi trừ đi phần đã báo
+    ngay cho đích khác.
+    """
     if not changes:
         return
     meta = _sources_meta()
     hhmm = now.strftime("%H:%M")
-    max_items = int(cfg.get("watch.max_instant_items", 15) or 15)
     chung = cfg.get("watch.filters") or {}
 
     for target in cfg.get("watch.targets", []) or []:
         nhan = target.get("send") or ["instant", "digest"]
-        if mode not in nhan:
+        can_kiem = "instant" if mode == "overflow" else mode
+        if can_kiem not in nhan:
             continue
+        if mode == "digest":
+            pool, already = ct.for_digest(changes, "instant" in nhan)
+        else:
+            pool, already = changes, 0
         loc = target.get("filters") or chung
-        chon = [c for c in changes
+        chon = [c for c in pool
                 if ct.passes_filters(c, loc, field_maps.get(c.source_id))]
         if not chon:
             continue
-        if mode == "instant" and len(chon) > max_items:
+        if mode == "overflow":
             text = cr.format_overflow(chon, meta, hhmm)
         elif mode == "instant":
             text = cr.format_instant(chon, meta, field_maps, hhmm)
@@ -275,9 +287,16 @@ async def job_watch_scan(context: ContextTypes.DEFAULT_TYPE):
     # rơi vào bản tin gom, không biến mất trong im lặng.
     ngay = [c for c in moi if c.instant_sent]
     if ngay:
+        qua_nhieu = len(ngay) > int(cfg.get("watch.max_instant_items", 15) or 15)
+        if qua_nhieu:
+            # Chỉ gửi tóm tắt -> chi tiết chưa ai thấy, giữ lại cho bản tin gom.
+            for ch in ngay:
+                ch.instant_sent = False
         try:
-            await _send_watch(context, "instant", ngay, field_maps, now)
-            log.info("Đã báo ngay %d thay đổi", len(ngay))
+            await _send_watch(context, "overflow" if qua_nhieu else "instant",
+                              ngay, field_maps, now)
+            log.info("Đã báo ngay %d thay đổi%s", len(ngay),
+                     " (dạng tóm tắt)" if qua_nhieu else "")
         except Exception as e:
             log.warning("Gửi tin báo ngay thất bại, chuyển sang bản tin gom: %s", e)
             for ch in ngay:
@@ -302,19 +321,22 @@ def _mo_ta_tu_luc(last_digest_at, now) -> str:
 
 
 async def job_watch_digest(context: ContextTypes.DEFAULT_TYPE):
-    """Gom các thay đổi chưa báo ngay thành một bản tin."""
+    """Gom các thay đổi đang chờ thành bản tin, riêng cho từng đích.
+
+    Truyền NGUYÊN hàng chờ (kể cả các mục đã báo ngay) cho _send_watch — mỗi
+    đích tự quyết định qua ct.for_digest cần thấy phần nào: đích chỉ nhận bản
+    tin phải thấy TẤT CẢ, đích có nhận báo ngay chỉ cần thấy phần chưa báo.
+    """
     if not cfg.get("watch.enabled", False):
         return
     now = now_dt()
     state = state_store.load(watch_state_path())
     cho = [ct.Change.from_dict(d) for d in (state.get("pending") or [])]
-    gom = [c for c in cho if not c.instant_sent]
-    da_bao = len(cho) - len(gom)
 
-    if gom:
-        await _send_watch(context, "digest", gom, _field_maps(state), now,
-                          _mo_ta_tu_luc(state.get("last_digest_at"), now), da_bao)
-        log.info("Đã gửi bản tin thay đổi (%d mục)", len(gom))
+    if cho:
+        await _send_watch(context, "digest", cho, _field_maps(state), now,
+                          _mo_ta_tu_luc(state.get("last_digest_at"), now))
+        log.info("Đã gửi bản tin thay đổi (%d mục đang chờ)", len(cho))
 
     state["pending"] = []
     state["last_digest_at"] = now.isoformat()
@@ -340,13 +362,14 @@ def register_jobs(app: Application):
             continue
         try:
             hh, mm = map(int, str(sched.get("time", "17:00")).split(":"))
+            gio = dtime(hh, mm, tzinfo=tz())
         except ValueError:
             log.warning("Giờ không hợp lệ cho %s, bỏ qua", name)
             continue
         # PTB >=20: 0=Chủ Nhật ... 6=Thứ Bảy. [1..5] = Thứ Hai -> Thứ Sáu.
         days = tuple(sched.get("days", [1, 2, 3, 4, 5]))
         app.job_queue.run_daily(
-            callback, time=dtime(hh, mm, tzinfo=tz()), days=days, name=name,
+            callback, time=gio, days=days, name=name,
         )
         log.info("Đã lên lịch %s lúc %02d:%02d các ngày %s", name, hh, mm, days)
 
@@ -367,10 +390,11 @@ def register_watch_jobs(app: Application):
     for hhmm in cfg.get("watch.digest_times", ["08:30", "16:30"]) or []:
         try:
             hh, mm = map(int, str(hhmm).split(":"))
+            gio = dtime(hh, mm, tzinfo=tz())
         except ValueError:
             log.warning("Giờ bản tin không hợp lệ: %s", hhmm)
             continue
-        app.job_queue.run_daily(job_watch_digest, time=dtime(hh, mm, tzinfo=tz()),
+        app.job_queue.run_daily(job_watch_digest, time=gio,
                                 days=days, name="watch_digest_%02d%02d" % (hh, mm))
         log.info("Đã lên lịch bản tin thay đổi lúc %02d:%02d các ngày %s", hh, mm, days)
 
@@ -487,11 +511,10 @@ async def cmd_moi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Không có thay đổi mới kể từ bản tin%s." % khi)
         return
 
-    gom = [c for c in cho if not c.instant_sent]
-    text = cr.format_digest(gom or cho, _sources_meta(), _field_maps(state),
+    # Admin xem toàn bộ hàng chờ, không tách theo đích như _send_watch.
+    text = cr.format_digest(cho, _sources_meta(), _field_maps(state),
                             now.strftime("%H:%M"),
-                            _mo_ta_tu_luc(state.get("last_digest_at"), now),
-                            len(cho) - len(gom) if gom else 0)
+                            _mo_ta_tu_luc(state.get("last_digest_at"), now), 0)
     await send_long(context.bot, update.effective_chat.id, text,
                     update.message.message_thread_id, parse_mode=ParseMode.HTML)
 
