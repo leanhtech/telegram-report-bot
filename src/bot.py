@@ -4,6 +4,7 @@
 Chạy: python -m src.bot
 """
 import logging
+import re
 from datetime import date, datetime, time as dtime
 
 import pytz
@@ -387,6 +388,7 @@ HELP_TEXT = """Danh sách lệnh:
 /trehan - Danh sách task trễ hạn / đến hạn hôm nay
 /tai - Tải công việc theo nhân sự (ai nhẹ tải / ai quá tải)
 /tuan - Tổng kết tuần
+/moi - Thay đổi trên các sheet kế hoạch kể từ bản tin gần nhất
 /thanhvien <tên> - Công việc hôm nay của một người (VD: /thanhvien Thái)
 /lamMoi - Xóa cache, đọc lại dữ liệu mới nhất từ sheet
 
@@ -403,7 +405,16 @@ Lệnh cấu hình (chỉ admin):
   Bỏ gửi riêng: /cauhinh set schedules.team_report.kiosk_chat_id null
   Khai báo nhân sự cho /tai (khi không đọc được dropdown):
   VD: /cauhinh set team.members Thái, Nam, Lan, Hùng
-/chatid - Hiện chat_id và topic_id của cuộc trò chuyện hiện tại"""
+/chatid - Hiện chat_id và topic_id của cuộc trò chuyện hiện tại
+/nguon - Các file sheet kế hoạch đang được theo dõi
+/nguon them <link> | Tên hiển thị | Tên tab - Thêm file để theo dõi thay đổi
+/nguon tab <id> [tên tab] - Xem hoặc đổi tab đang theo dõi
+/nguon xoa <id> - Bỏ theo dõi một file
+/theodoi bat | tat - Bật/tắt theo dõi thay đổi
+  Cấu hình thêm: /cauhinh set watch.poll_interval_minutes 10
+  VD: /cauhinh set watch.active_hours 08:00-18:00
+  VD: /cauhinh set watch.digest_times 08:30, 16:30
+  VD: /cauhinh set watch.instant_fields due, assignee, status"""
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -485,6 +496,192 @@ async def cmd_moi(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     update.message.message_thread_id, parse_mode=ParseMode.HTML)
 
 
+async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Quản lý danh sách file sheet đang được theo dõi (chỉ admin)."""
+    if not is_admin(update):
+        await update.message.reply_text("Bạn không có quyền quản lý nguồn theo dõi.")
+        return
+
+    args = context.args or []
+    sources = list(cfg.get("watch.sources", []) or [])
+    state = state_store.load(watch_state_path())
+
+    # --- Liệt kê ---
+    if not args:
+        if not sources:
+            await update.message.reply_text(
+                "Chưa theo dõi file nào.\n"
+                "Thêm: /nguon them <link Google Sheet>")
+            return
+        parts = ["Các file đang theo dõi:"]
+        for src in sources:
+            sid = str(src.get("id"))
+            info = (state.get("sources") or {}).get(sid) or {}
+            trang_thai = "LỖI: %s" % info["error"] if info.get("error") else "OK"
+            parts.append(
+                "- %s (%s)\n  tab: %s | chế độ: %s | %s dòng\n  quét lúc: %s | %s"
+                % (src.get("name") or sid, sid,
+                   src.get("worksheet_name") or "(tab đầu tiên)",
+                   info.get("mode") or "?", info.get("rows", "?"),
+                   info.get("scanned_at") or "chưa quét", trang_thai))
+        parts.append("")
+        parts.append("Thêm: /nguon them <link> | Tên hiển thị | Tên tab")
+        await update.message.reply_text("\n".join(parts))
+        return
+
+    lenh = args[0].lower()
+
+    # --- Thêm nguồn ---
+    if lenh == "them" and len(args) >= 2:
+        phan = " ".join(args[1:]).split("|")
+        sheet_id = _boc_spreadsheet_id(phan[0])
+        if not sheet_id:
+            await update.message.reply_text(
+                "Không nhận ra link/ID sheet. Dán nguyên link trên thanh địa chỉ.")
+            return
+        ten = phan[1].strip() if len(phan) > 1 and phan[1].strip() else ""
+        tab = phan[2].strip() if len(phan) > 2 and phan[2].strip() else ""
+
+        try:
+            tabs = sheets.list_worksheets(sheet_id)
+        except Exception as e:
+            await update.message.reply_text(
+                "Không mở được file: %s\n\n"
+                "Hãy chia sẻ file cho địa chỉ sau với quyền Viewer rồi thử lại:\n%s"
+                % (e, sheets.service_account_email() or "(chưa đọc được credentials)"))
+            return
+
+        if tab and tab not in tabs:
+            await update.message.reply_text(
+                "File không có tab “%s”. Các tab hiện có: %s" % (tab, ", ".join(tabs)))
+            return
+        if not tab:
+            mac_dinh = cfg.get("google_sheets.worksheet_name", "")
+            tab = mac_dinh if mac_dinh in tabs else (tabs[0] if tabs else "")
+
+        try:
+            headers, rows = sheets.fetch_rows(sheet_id, tab)
+        except Exception as e:
+            await update.message.reply_text("Đọc được file nhưng lỗi khi đọc tab: %s" % e)
+            return
+
+        ten = ten or tab or sheet_id[:8]
+        sid = _slug(ten)
+        dang_co = {str(s.get("id")) for s in sources}
+        goc, dem = sid, 2
+        while sid in dang_co:
+            sid, dem = "%s%d" % (goc, dem), dem + 1
+
+        mode, field_map = ct.detect_mode(headers)
+        snapshot = ct.build_snapshot(rows, headers, field_map, mode)
+
+        sources.append({"id": sid, "name": ten, "spreadsheet_id": sheet_id,
+                        "worksheet_name": tab})
+        cfg.set("watch.sources", sources)
+
+        # Chụp ảnh đầu tiên và KHÔNG báo gì — nếu không sẽ dội hàng trăm "dòng mới".
+        state.setdefault("sources", {})[sid] = {
+            "mode": mode, "headers": headers, "field_map": field_map,
+            "snapshot": snapshot, "scanned_at": now_dt().isoformat(),
+            "rows": len(snapshot), "error": None, "fail_count": 0,
+        }
+        state_store.save(watch_state_path(), state)
+
+        nhan_ra = sorted(set(field_map.values()))
+        parts = [
+            "Bắt đầu theo dõi “%s” (id: %s) — %d dòng." % (ten, sid, len(snapshot)),
+            "Tab: %s" % tab,
+            "Chế độ: %s (%d/%d cột nhận ra ý nghĩa)" % (mode, len(nhan_ra), len(headers)),
+            "Các cột trong sheet: %s" % ", ".join(headers),
+        ]
+        if mode == "generic":
+            parts.append("")
+            parts.append(
+                "Đang chạy chế độ bảng chung — bot báo theo tên cột nguyên văn. "
+                "Muốn báo giàu nghĩa hơn thì khai ánh xạ cột trong config.yaml "
+                "(watch.sources -> columns).")
+        parts.append("")
+        parts.append("Thay đổi từ giờ trở đi sẽ được báo.")
+        if not cfg.get("watch.enabled", False):
+            parts.append("Lưu ý: chức năng đang TẮT — bật bằng /theodoi bat")
+        await update.message.reply_text("\n".join(parts))
+        return
+
+    # --- Xem / đổi tab ---
+    if lenh == "tab" and len(args) >= 2:
+        sid = args[1]
+        src = next((s for s in sources if str(s.get("id")) == sid), None)
+        if not src:
+            await update.message.reply_text("Không có nguồn id “%s”." % sid)
+            return
+        try:
+            tabs = sheets.list_worksheets(src.get("spreadsheet_id"))
+        except Exception as e:
+            await update.message.reply_text("Không mở được file: %s" % e)
+            return
+        if len(args) == 2:
+            await update.message.reply_text(
+                "Các tab của “%s”:\n- %s\n\nĐổi: /nguon tab %s <tên tab>"
+                % (src.get("name") or sid, "\n- ".join(tabs), sid))
+            return
+        tab_moi = " ".join(args[2:]).strip()
+        if tab_moi not in tabs:
+            await update.message.reply_text(
+                "Không có tab “%s”. Các tab hiện có: %s" % (tab_moi, ", ".join(tabs)))
+            return
+        src["worksheet_name"] = tab_moi
+        cfg.set("watch.sources", sources)
+        # Đổi tab = đổi dữ liệu hoàn toàn -> bỏ ảnh chụp cũ, chụp lại, không báo.
+        (state.get("sources") or {}).pop(sid, None)
+        state_store.save(watch_state_path(), state)
+        await update.message.reply_text(
+            "Đã đổi tab của “%s” sang “%s”. Sẽ chụp lại ảnh ở lần quét tới."
+            % (src.get("name") or sid, tab_moi))
+        return
+
+    # --- Xoá nguồn ---
+    if lenh == "xoa" and len(args) >= 2:
+        sid = args[1]
+        con_lai = [s for s in sources if str(s.get("id")) != sid]
+        if len(con_lai) == len(sources):
+            await update.message.reply_text("Không có nguồn id “%s”." % sid)
+            return
+        cfg.set("watch.sources", con_lai)
+        (state.get("sources") or {}).pop(sid, None)
+        state["pending"] = [p for p in (state.get("pending") or [])
+                            if p.get("source_id") != sid]
+        state_store.save(watch_state_path(), state)
+        await update.message.reply_text("Đã bỏ theo dõi nguồn “%s”." % sid)
+        return
+
+    await update.message.reply_text(
+        "Cú pháp:\n"
+        "/nguon\n"
+        "/nguon them <link> | Tên hiển thị | Tên tab\n"
+        "/nguon tab <id> [tên tab]\n"
+        "/nguon xoa <id>")
+
+
+async def cmd_theodoi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bật/tắt nhanh chức năng theo dõi thay đổi (chỉ admin)."""
+    if not is_admin(update):
+        await update.message.reply_text("Bạn không có quyền đổi cấu hình bot.")
+        return
+    arg = (context.args[0].lower() if context.args else "")
+    if arg in ("bat", "bật", "on", "true"):
+        cfg.set("watch.enabled", True)
+        register_jobs(context.application)
+        await update.message.reply_text("Đã BẬT theo dõi thay đổi.")
+    elif arg in ("tat", "tắt", "off", "false"):
+        cfg.set("watch.enabled", False)
+        register_jobs(context.application)
+        await update.message.reply_text("Đã TẮT theo dõi thay đổi.")
+    else:
+        trang_thai = "BẬT" if cfg.get("watch.enabled", False) else "TẮT"
+        await update.message.reply_text(
+            "Theo dõi thay đổi đang %s.\nĐổi: /theodoi bat | /theodoi tat" % trang_thai)
+
+
 async def cmd_thanhvien(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = " ".join(context.args).strip().lower()
     if not name:
@@ -517,6 +714,30 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text("\n".join(lines))
 
 
+# Link sheet dạng https://docs.google.com/spreadsheets/d/<ID>/edit#gid=0
+SHEET_ID_RE = re.compile(r"/d/([a-zA-Z0-9-_]{20,})")
+
+
+def _boc_spreadsheet_id(raw: str) -> str:
+    """Lấy spreadsheet_id từ link đầy đủ hoặc từ id dán trần."""
+    raw = (raw or "").strip()
+    khop = SHEET_ID_RE.search(raw)
+    if khop:
+        return khop.group(1)
+    return raw if re.fullmatch(r"[a-zA-Z0-9-_]{20,}", raw) else ""
+
+
+def _slug(text: str) -> str:
+    """Sinh id ngắn không dấu từ tên hiển thị."""
+    bang = str.maketrans(
+        "àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợ"
+        "ùúủũụưừứửữựỳýỷỹỵđ",
+        "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooo"
+        "uuuuuuuuuuuyyyyyd")
+    s = re.sub(r"[^a-z0-9]+", "_", text.lower().translate(bang)).strip("_")
+    return s[:20] or "nguon"
+
+
 def _parse_scalar(raw: str):
     low = raw.lower()
     if low in ("true", "on", "bat", "bật"):
@@ -532,7 +753,10 @@ def _parse_scalar(raw: str):
 
 
 # Các khóa luôn nhận giá trị dạng danh sách (các phần tử cách nhau bằng dấu phẩy).
-LIST_KEYS = {"team.members", "telegram.admin_ids"}
+LIST_KEYS = {"team.members", "telegram.admin_ids", "watch.digest_times",
+             "watch.active_days", "watch.instant_kinds", "watch.instant_fields",
+             "watch.filters.sources", "watch.filters.projects",
+             "watch.filters.assignees", "watch.filters.keywords"}
 
 
 def _parse_value(raw: str, key: str = ""):
@@ -594,10 +818,14 @@ async def cmd_cauhinh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if key.startswith(("telegram.bot_token", "google_sheets.credentials")):
             await update.message.reply_text("Không cho phép đổi khóa này qua chat.")
             return
+        if key == "watch.sources":
+            await update.message.reply_text(
+                "Dùng /nguon them | /nguon xoa để quản lý danh sách file theo dõi.")
+            return
         value = _parse_value(raw, key)
         cfg.set(key, value)
         note = ""
-        if key.startswith("schedules."):
+        if key.startswith("schedules.") or key.startswith("watch."):
             register_jobs(context.application)
             note = "\nLịch gửi đã được nạp lại."
         elif key == "team.members":
@@ -650,6 +878,8 @@ def main():
     app.add_handler(CommandHandler("trehan", cmd_trehan))
     app.add_handler(CommandHandler("tai", cmd_tai))
     app.add_handler(CommandHandler("moi", cmd_moi))
+    app.add_handler(CommandHandler("nguon", cmd_nguon))
+    app.add_handler(CommandHandler("theodoi", cmd_theodoi))
     app.add_handler(CommandHandler("tuan", cmd_tuan))
     app.add_handler(CommandHandler("thanhvien", cmd_thanhvien))
     app.add_handler(CommandHandler("lamMoi", cmd_lammoi))
