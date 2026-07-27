@@ -7,3 +7,6 @@ services:
       # mount rw để lệnh /cauhinh set lưu được thay đổi vào config.yaml
       - ./config.yaml:/app/config.yaml
       - ./credentials.json:/app/credentials.json:ro
+      # ảnh chụp sheet của chức năng theo dõi thay đổi — mất thư mục này thì
+      # bot chỉ chụp lại từ đầu (im lặng), không dội tin
+      - ./state:/app/state

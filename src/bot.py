@@ -14,7 +14,10 @@ from telegram.ext import (
 )
 
 from .config import cfg
+from . import change_reporter as cr
+from . import change_tracker as ct
 from . import report_generator as rg
+from . import state_store
 from .sheets_client import sheets
 
 logging.basicConfig(
@@ -23,6 +26,7 @@ logging.basicConfig(
 log = logging.getLogger("report-bot")
 
 MAX_LEN = 4000  # Telegram giới hạn 4096 ký tự / tin nhắn
+WATCH_STATE_FILE = "state/watch_state.json"   # ghi đè bằng watch.state_file
 
 
 def tz():
@@ -31,6 +35,31 @@ def tz():
 
 def today() -> date:
     return datetime.now(tz()).date()
+
+
+def now_dt() -> datetime:
+    """Thời điểm hiện tại theo múi giờ cấu hình."""
+    return datetime.now(tz())
+
+
+def watch_state_path() -> str:
+    return cfg.get("watch.state_file", WATCH_STATE_FILE)
+
+
+def _sources_meta() -> dict:
+    """{id nguồn: tên hiển thị} cho phần dựng tin."""
+    meta = {}
+    for src in cfg.get("watch.sources", []) or []:
+        sid = str(src.get("id") or "").strip()
+        if sid:
+            meta[sid] = src.get("name") or sid
+    return meta
+
+
+def _field_maps(state: dict) -> dict:
+    """{id nguồn: field_map} lấy từ trạng thái đã lưu."""
+    return {sid: (info or {}).get("field_map") or {}
+            for sid, info in (state.get("sources") or {}).items()}
 
 
 def is_admin(update: Update) -> bool:
@@ -100,6 +129,152 @@ async def job_weekly_summary(context: ContextTypes.DEFAULT_TYPE):
     log.info("Đã gửi tổng kết tuần")
 
 
+# ============================================================
+# THEO DÕI THAY ĐỔI TRÊN CÁC SHEET KẾ HOẠCH
+# ============================================================
+def _scan_source(src: dict, state: dict, now):
+    """Quét một nguồn, cập nhật ảnh chụp trong `state`.
+
+    Trả về (danh sách Change, lỗi hoặc None). Không gửi tin nhắn — việc gửi do
+    job quyết định sau khi đã gom đủ mọi nguồn.
+    """
+    sid = str(src.get("id") or "").strip()
+    truoc = (state.get("sources") or {}).get(sid) or {}
+    try:
+        headers, rows = sheets.fetch_rows(src.get("spreadsheet_id"),
+                                          src.get("worksheet_name") or "")
+    except Exception as e:   # một nguồn hỏng không được làm chết cả job
+        return [], e
+
+    mode, field_map = ct.detect_mode(headers, src.get("columns"))
+    snapshot = ct.build_snapshot(rows, headers, field_map, mode,
+                                 src.get("key_column", "") or "")
+    # Giữ nguyên error/fail_count của lần trước: việc xoá cờ lỗi (và báo "đã
+    # khôi phục") là của _bao_loi_nguon, không phải của hàm này.
+    hien_tai = {
+        "mode": mode, "headers": headers, "field_map": field_map,
+        "snapshot": snapshot, "scanned_at": now.isoformat(),
+        "rows": len(snapshot), "error": truoc.get("error"),
+        "fail_count": truoc.get("fail_count", 0),
+    }
+
+    changes = []
+    if truoc.get("snapshot"):
+        changes = ct.match_renames(ct.diff_snapshots(truoc, hien_tai, sid))
+    else:
+        log.info("Nguồn %s: chụp ảnh lần đầu (%d dòng), chưa báo gì", sid, len(snapshot))
+
+    state.setdefault("sources", {})[sid] = hien_tai
+    return changes, None
+
+
+async def _bao_loi_nguon(context, state: dict, src: dict, err) -> None:
+    """Báo admin đúng một lần cho mỗi nguồn hỏng, và báo khi khôi phục."""
+    sid = str(src.get("id") or "").strip()
+    info = state.setdefault("sources", {}).setdefault(sid, {})
+    ten = src.get("name") or sid
+
+    if err is None:
+        if info.get("error"):
+            info["error"], info["fail_count"] = None, 0
+            await _nhan_admin(context, "✅ Đã đọc lại được nguồn “%s”." % ten)
+        return
+
+    info["fail_count"] = int(info.get("fail_count") or 0) + 1
+    if info.get("error"):
+        return      # đã báo rồi, không nhắc lại mỗi 10 phút
+    if info["fail_count"] < 3:
+        # Lỗi mạng/quota tạm thời: im lặng thử lại vòng sau.
+        log.warning("Nguồn %s lỗi lần %d: %s", sid, info["fail_count"], err)
+        return
+    info["error"] = str(err)
+    await _nhan_admin(
+        context,
+        "⚠️ Không đọc được nguồn “%s”: %s\n\n"
+        "Kiểm tra: đã chia sẻ file cho %s quyền Viewer chưa, "
+        "và tab “%s” còn tồn tại không (dùng /nguon tab %s để xem)."
+        % (ten, err, sheets.service_account_email() or "(service account)",
+           src.get("worksheet_name") or "(tab đầu tiên)", sid))
+
+
+async def _nhan_admin(context, text: str) -> None:
+    for admin_id in cfg.admin_ids:
+        try:
+            await context.bot.send_message(admin_id, text)
+        except Exception as e:
+            log.warning("Không gửi được tin cho admin %s: %s", admin_id, e)
+
+
+async def _send_watch(context, mode: str, changes, field_maps, now,
+                      since_text: str = "", already: int = 0) -> None:
+    """Gửi thay đổi tới các đích đã cấu hình, mỗi đích một bộ lọc riêng."""
+    if not changes:
+        return
+    meta = _sources_meta()
+    hhmm = now.strftime("%H:%M")
+    max_items = int(cfg.get("watch.max_instant_items", 15) or 15)
+    chung = cfg.get("watch.filters") or {}
+
+    for target in cfg.get("watch.targets", []) or []:
+        nhan = target.get("send") or ["instant", "digest"]
+        if mode not in nhan:
+            continue
+        loc = target.get("filters") or chung
+        chon = [c for c in changes
+                if ct.passes_filters(c, loc, field_maps.get(c.source_id))]
+        if not chon:
+            continue
+        if mode == "instant" and len(chon) > max_items:
+            text = cr.format_overflow(chon, meta, hhmm)
+        elif mode == "instant":
+            text = cr.format_instant(chon, meta, field_maps, hhmm)
+        else:
+            text = cr.format_digest(chon, meta, field_maps, hhmm, since_text, already)
+        await send_long(context.bot, target.get("chat_id"), text,
+                        target.get("topic_id"), parse_mode=ParseMode.HTML)
+
+
+async def job_watch_scan(context: ContextTypes.DEFAULT_TYPE):
+    """Quét định kỳ các sheet kế hoạch, báo ngay phần cần phản ứng."""
+    if not cfg.get("watch.enabled", False):
+        return
+    now = now_dt()
+    if not ct.in_active_window(now, cfg.get("watch.active_days"),
+                               cfg.get("watch.active_hours", "08:00-18:00")):
+        return
+
+    state = state_store.load(watch_state_path())
+    # Lần quét đầu của ngày mới gom hết thay đổi qua đêm vào bản tin sáng,
+    # thay vì bắn một loạt tin lúc mở khung giờ.
+    ep_gom = ct.is_first_scan_of_day(state.get("last_scan_at"), now)
+
+    moi = []
+    for src in cfg.get("watch.sources", []) or []:
+        if not str(src.get("id") or "").strip():
+            log.warning("Bỏ qua nguồn thiếu 'id' trong watch.sources")
+            continue
+        changes, err = _scan_source(src, state, now)
+        await _bao_loi_nguon(context, state, src, err)
+        moi.extend(changes)
+
+    field_maps = _field_maps(state)
+    for ch in moi:
+        ch.at = now.isoformat()
+        loai = "digest" if ep_gom else ct.classify(
+            ch, cfg.get("watch.instant_kinds"), cfg.get("watch.instant_fields"),
+            field_maps.get(ch.source_id))
+        ch.instant_sent = (loai == "instant")
+
+    state.setdefault("pending", []).extend(c.to_dict() for c in moi)
+    state["last_scan_at"] = now.isoformat()
+    state_store.save(watch_state_path(), state)
+
+    ngay = [c for c in moi if c.instant_sent]
+    if ngay:
+        await _send_watch(context, "instant", ngay, field_maps, now)
+        log.info("Đã báo ngay %d thay đổi", len(ngay))
+
+
 JOBS = {
     "team_report": job_team_report,
     "personal_report": job_personal_report,
@@ -128,6 +303,18 @@ def register_jobs(app: Application):
             callback, time=dtime(hh, mm, tzinfo=tz()), days=days, name=name,
         )
         log.info("Đã lên lịch %s lúc %02d:%02d các ngày %s", name, hh, mm, days)
+
+    register_watch_jobs(app)
+
+
+def register_watch_jobs(app: Application):
+    """Job quét định kỳ cho chức năng theo dõi thay đổi."""
+    if not cfg.get("watch.enabled", False):
+        return
+    phut = max(1, int(cfg.get("watch.poll_interval_minutes", 10) or 10))
+    app.job_queue.run_repeating(job_watch_scan, interval=phut * 60, first=30,
+                                name="watch_scan")
+    log.info("Đã lên lịch quét thay đổi mỗi %d phút", phut)
 
 
 # ============================================================
