@@ -114,5 +114,109 @@ class TestChupAnh(unittest.TestCase):
         self.assertEqual(entry["row"], 2)
 
 
+class TestSoSanh(unittest.TestCase):
+    def setUp(self):
+        self.mode, self.fm = ct.detect_mode(TASK_HEADERS)
+
+    def _state(self, rows, headers=None):
+        headers = headers or TASK_HEADERS
+        mode, fm = ct.detect_mode(headers)
+        return {"headers": headers, "field_map": fm,
+                "snapshot": ct.build_snapshot(rows, headers, fm, mode)}
+
+    def _rows(self, *specs):
+        out = []
+        for i, spec in enumerate(specs, start=2):
+            base = {h: "" for h in TASK_HEADERS}
+            base.update(spec)
+            out.append(row(i, **base))
+        return out
+
+    def test_them_dong_moi(self):
+        cu = self._state(self._rows({"STT": "1", "Tên Task": "A"}))
+        moi = self._state(self._rows({"STT": "1", "Tên Task": "A"},
+                                     {"STT": "2", "Tên Task": "B"}))
+        changes = ct.diff_snapshots(cu, moi, "vnedu")
+        self.assertEqual([c.kind for c in changes], ["added"])
+        self.assertEqual(changes[0].label, "B")
+        self.assertEqual(changes[0].source_id, "vnedu")
+
+    def test_xoa_dong(self):
+        cu = self._state(self._rows({"STT": "1", "Tên Task": "A"},
+                                    {"STT": "2", "Tên Task": "B"}))
+        moi = self._state(self._rows({"STT": "1", "Tên Task": "A"}))
+        changes = ct.diff_snapshots(cu, moi, "vnedu")
+        self.assertEqual([c.kind for c in changes], ["removed"])
+        self.assertEqual(changes[0].label, "B")
+
+    def test_sua_o_bao_dung_cu_va_moi(self):
+        cu = self._state(self._rows({"STT": "1", "Tên Task": "A", "Hạn": "26/07"}))
+        moi = self._state(self._rows({"STT": "1", "Tên Task": "A", "Hạn": "30/07"}))
+        changes = ct.diff_snapshots(cu, moi, "vnedu")
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].kind, "modified")
+        self.assertEqual(changes[0].fields, [["Hạn", "26/07", "30/07"]])
+
+    def test_sort_lai_sheet_thi_khong_bao_gi(self):
+        a = {"STT": "1", "Tên Task": "A"}
+        b = {"STT": "2", "Tên Task": "B"}
+        cu = self._state(self._rows(a, b))
+        moi = self._state(self._rows(b, a))     # đảo thứ tự
+        self.assertEqual(ct.diff_snapshots(cu, moi, "vnedu"), [])
+
+    def test_chen_dong_giua_chung_chi_bao_dong_moi(self):
+        a = {"STT": "1", "Tên Task": "A"}
+        b = {"STT": "2", "Tên Task": "B"}
+        c = {"STT": "3", "Tên Task": "C"}
+        cu = self._state(self._rows(a, c))
+        moi = self._state(self._rows(a, b, c))
+        changes = ct.diff_snapshots(cu, moi, "vnedu")
+        self.assertEqual([(x.kind, x.label) for x in changes], [("added", "B")])
+
+    def test_khac_biet_chi_o_khoang_trang_thi_bo_qua(self):
+        cu = self._state(self._rows({"STT": "1", "Tên Task": "A", "Hạn": "26/07"}))
+        moi = self._state(self._rows({"STT": "1", "Tên Task": "A", "Hạn": " 26/07 "}))
+        self.assertEqual(ct.diff_snapshots(cu, moi, "vnedu"), [])
+
+    def test_them_cot_moi_duoc_bao(self):
+        cu = self._state(self._rows({"STT": "1", "Tên Task": "A"}))
+        headers_moi = TASK_HEADERS + ["Rủi ro"]
+        rows_moi = [row(2, **dict({h: "" for h in headers_moi},
+                                  **{"STT": "1", "Tên Task": "A"}))]
+        moi = self._state(rows_moi, headers_moi)
+        changes = ct.diff_snapshots(cu, moi, "vnedu")
+        cot = [c for c in changes if c.kind == "column"]
+        self.assertEqual(len(cot), 1)
+        self.assertEqual(cot[0].label, "Rủi ro")
+
+    def test_bot_cot_duoc_bao(self):
+        headers_cu = TASK_HEADERS + ["Rủi ro"]
+        rows_cu = [row(2, **dict({h: "" for h in headers_cu},
+                                 **{"STT": "1", "Tên Task": "A"}))]
+        cu = self._state(rows_cu, headers_cu)
+        moi = self._state(self._rows({"STT": "1", "Tên Task": "A"}))
+        cot = [c for c in ct.diff_snapshots(cu, moi, "vnedu") if c.kind == "column"]
+        self.assertEqual(len(cot), 1)
+        self.assertEqual(cot[0].fields, [["Rủi ro", "(đã xoá)", ""]])
+
+    def test_chua_co_anh_chup_cu_thi_moi_dong_deu_la_added(self):
+        # Bootstrap: so với ảnh chụp rỗng thì mọi dòng đều thành "added". Vì vậy
+        # nơi gọi (bot._scan_source) BẮT BUỘC phải bỏ qua lần quét đầu tiên —
+        # nếu không sẽ dội hàng trăm tin "dòng mới" (spec mục 10).
+        moi = self._state(self._rows({"STT": "1", "Tên Task": "A"},
+                                     {"STT": "2", "Tên Task": "B"}))
+        rong = {"headers": [], "field_map": {}, "snapshot": {}}
+        changes = ct.diff_snapshots(rong, moi, "vnedu")
+        self.assertEqual([c.kind for c in changes if c.kind != "column"],
+                         ["added", "added"])
+
+    def test_change_json_round_trip(self):
+        ch = ct.Change(source_id="vnedu", kind="modified", key="k:1", label="A",
+                       fields=[["Hạn", "26/07", "30/07"]], cells={"Hạn": "30/07"})
+        lai = ct.Change.from_dict(ch.to_dict())
+        self.assertEqual(lai.fields, [["Hạn", "26/07", "30/07"]])
+        self.assertEqual(lai.kind, "modified")
+
+
 if __name__ == "__main__":
     unittest.main()

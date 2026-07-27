@@ -162,3 +162,88 @@ def build_snapshot(rows: List[Dict[str, Any]], headers: List[str],
             key = "%s#%d" % (key, seen[key])
         snapshot[key] = {"row": item.get("row", 0), "cells": cells}
     return snapshot
+
+
+# ------------------------------------------------------------------
+# Một thay đổi & phép so sánh hai ảnh chụp
+# ------------------------------------------------------------------
+@dataclass
+class Change:
+    """Một thay đổi phát hiện được giữa hai lần quét.
+
+    fields dùng list-lồng-list (không dùng tuple) để JSON round-trip được khi
+    nằm trong hàng chờ của state_store.
+    """
+    source_id: str = ""
+    kind: str = ""            # added | removed | modified | renamed | column
+    key: str = ""
+    label: str = ""
+    old_label: str = ""       # chỉ dùng cho kind="renamed"
+    row: Optional[int] = None
+    fields: List[List[str]] = field(default_factory=list)
+    cells: Dict[str, str] = field(default_factory=dict)
+    at: str = ""              # thời điểm phát hiện (ISO), do bot.py điền
+    instant_sent: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: Dict[str, Any]) -> "Change":
+        known = Change.__dataclass_fields__
+        return Change(**{k: v for k, v in (data or {}).items() if k in known})
+
+
+def diff_snapshots(old_state: Dict[str, Any], new_state: Dict[str, Any],
+                   source_id: str) -> List[Change]:
+    """So hai ảnh chụp của cùng một nguồn.
+
+    old_state / new_state: {"headers": [...], "field_map": {...}, "snapshot": {...}}
+    Dòng có khoá dạng "row:" (không có gì để bám) không báo thêm/xoá, tránh
+    nhiễu khi ai đó chèn hay xoá dòng trắng.
+    """
+    changes: List[Change] = []
+    old_headers = old_state.get("headers") or []
+    new_headers = new_state.get("headers") or []
+    field_map = new_state.get("field_map") or {}
+
+    for col in new_headers:
+        if col not in old_headers:
+            changes.append(Change(source_id=source_id, kind="column",
+                                  key="col:" + col, label=col,
+                                  fields=[[col, "", "(cột mới)"]]))
+    for col in old_headers:
+        if col not in new_headers:
+            changes.append(Change(source_id=source_id, kind="column",
+                                  key="col:" + col, label=col,
+                                  fields=[[col, "(đã xoá)", ""]]))
+
+    shared = [h for h in new_headers if h in old_headers]
+    old_snap = old_state.get("snapshot") or {}
+    new_snap = new_state.get("snapshot") or {}
+
+    for key, entry in new_snap.items():
+        cells = entry.get("cells") or {}
+        if key in old_snap:
+            truoc = old_snap[key].get("cells") or {}
+            diffs = [[col, truoc.get(col, ""), cells.get(col, "")]
+                     for col in shared
+                     if (truoc.get(col, "") or "").strip()
+                     != (cells.get(col, "") or "").strip()]
+            if diffs:
+                changes.append(Change(source_id=source_id, kind="modified", key=key,
+                                      label=row_label(cells, new_headers, field_map),
+                                      row=entry.get("row"), fields=diffs, cells=cells))
+        elif not key.startswith("row:"):
+            changes.append(Change(source_id=source_id, kind="added", key=key,
+                                  label=row_label(cells, new_headers, field_map),
+                                  row=entry.get("row"), cells=cells))
+
+    old_field_map = old_state.get("field_map") or {}
+    for key, entry in old_snap.items():
+        if key not in new_snap and not key.startswith("row:"):
+            cells = entry.get("cells") or {}
+            changes.append(Change(source_id=source_id, kind="removed", key=key,
+                                  label=row_label(cells, old_headers, old_field_map),
+                                  row=entry.get("row"), cells=cells))
+    return changes
