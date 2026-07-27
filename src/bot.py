@@ -287,6 +287,39 @@ async def job_watch_scan(context: ContextTypes.DEFAULT_TYPE):
     state_store.save(watch_state_path(), state)
 
 
+def _mo_ta_tu_luc(last_digest_at, now) -> str:
+    """Mô tả khoảng thời gian của bản tin, VD 'Từ 08:30 hôm nay'."""
+    if not last_digest_at:
+        return "Từ lần chạy gần nhất"
+    try:
+        truoc = datetime.fromisoformat(last_digest_at)
+    except (ValueError, TypeError):
+        return "Từ lần chạy gần nhất"
+    if truoc.date() == now.date():
+        return "Từ %s hôm nay" % truoc.strftime("%H:%M")
+    return "Từ %s" % truoc.strftime("%H:%M %d/%m")
+
+
+async def job_watch_digest(context: ContextTypes.DEFAULT_TYPE):
+    """Gom các thay đổi chưa báo ngay thành một bản tin."""
+    if not cfg.get("watch.enabled", False):
+        return
+    now = now_dt()
+    state = state_store.load(watch_state_path())
+    cho = [ct.Change.from_dict(d) for d in (state.get("pending") or [])]
+    gom = [c for c in cho if not c.instant_sent]
+    da_bao = len(cho) - len(gom)
+
+    if gom:
+        await _send_watch(context, "digest", gom, _field_maps(state), now,
+                          _mo_ta_tu_luc(state.get("last_digest_at"), now), da_bao)
+        log.info("Đã gửi bản tin thay đổi (%d mục)", len(gom))
+
+    state["pending"] = []
+    state["last_digest_at"] = now.isoformat()
+    state_store.save(watch_state_path(), state)
+
+
 JOBS = {
     "team_report": job_team_report,
     "personal_report": job_personal_report,
@@ -327,6 +360,18 @@ def register_watch_jobs(app: Application):
     app.job_queue.run_repeating(job_watch_scan, interval=phut * 60, first=30,
                                 name="watch_scan")
     log.info("Đã lên lịch quét thay đổi mỗi %d phút", phut)
+
+    # PTB >=20: 0=Chủ Nhật ... 6=Thứ Bảy. [1..5] = Thứ Hai -> Thứ Sáu.
+    days = tuple(cfg.get("watch.active_days", [1, 2, 3, 4, 5]) or [1, 2, 3, 4, 5])
+    for hhmm in cfg.get("watch.digest_times", ["08:30", "16:30"]) or []:
+        try:
+            hh, mm = map(int, str(hhmm).split(":"))
+        except ValueError:
+            log.warning("Giờ bản tin không hợp lệ: %s", hhmm)
+            continue
+        app.job_queue.run_daily(job_watch_digest, time=dtime(hh, mm, tzinfo=tz()),
+                                days=days, name="watch_digest_%02d%02d" % (hh, mm))
+        log.info("Đã lên lịch bản tin thay đổi lúc %02d:%02d các ngày %s", hh, mm, days)
 
 
 # ============================================================
@@ -411,6 +456,31 @@ async def cmd_tuan(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_tai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = rg.build_workload_report(today())
+    await send_long(context.bot, update.effective_chat.id, text,
+                    update.message.message_thread_id, parse_mode=ParseMode.HTML)
+
+
+async def cmd_moi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xem các thay đổi kể từ bản tin gần nhất (không xoá hàng chờ)."""
+    now = now_dt()
+    state = state_store.load(watch_state_path())
+    cho = [ct.Change.from_dict(d) for d in (state.get("pending") or [])]
+    if not cho:
+        moc = state.get("last_digest_at")
+        khi = ""
+        if moc:
+            try:
+                khi = " lúc %s" % datetime.fromisoformat(moc).strftime("%H:%M")
+            except (ValueError, TypeError):
+                khi = ""
+        await update.message.reply_text("Không có thay đổi mới kể từ bản tin%s." % khi)
+        return
+
+    gom = [c for c in cho if not c.instant_sent]
+    text = cr.format_digest(gom or cho, _sources_meta(), _field_maps(state),
+                            now.strftime("%H:%M"),
+                            _mo_ta_tu_luc(state.get("last_digest_at"), now),
+                            len(cho) - len(gom) if gom else 0)
     await send_long(context.bot, update.effective_chat.id, text,
                     update.message.message_thread_id, parse_mode=ParseMode.HTML)
 
@@ -579,6 +649,7 @@ def main():
     app.add_handler(CommandHandler("tiendo", cmd_tiendo))
     app.add_handler(CommandHandler("trehan", cmd_trehan))
     app.add_handler(CommandHandler("tai", cmd_tai))
+    app.add_handler(CommandHandler("moi", cmd_moi))
     app.add_handler(CommandHandler("tuan", cmd_tuan))
     app.add_handler(CommandHandler("thanhvien", cmd_thanhvien))
     app.add_handler(CommandHandler("lamMoi", cmd_lammoi))
