@@ -817,7 +817,7 @@ git commit -m "feat(watch): so sánh hai ảnh chụp, phát hiện thêm/xoá/s
 
 **Interfaces:**
 - Consumes: `Change`, `diff_snapshots` (Task 3).
-- Produces: `RENAME_CELLS_RATIO = 0.7` · `RENAME_LABEL_RATIO = 0.6` · `match_renames(changes: list[Change]) -> list[Change]` — trả danh sách mới, các cặp removed+added được ghép thành một `Change(kind="renamed")` với `old_label` là tên cũ.
+- Produces: `RENAME_CELLS_RATIO = 0.7` · `RENAME_LABEL_RATIO = 0.6` · `RENAME_OTHERS_RATIO = 0.5` · `match_renames(changes: list[Change]) -> list[Change]` — trả danh sách mới, các cặp removed+added được ghép thành một `Change(kind="renamed")` với `old_label` là tên cũ.
 
 - [ ] **Step 1: Viết test thất bại**
 
@@ -889,8 +889,9 @@ Kỳ vọng: FAIL — `AttributeError: module 'src.change_tracker' has no attrib
 # ------------------------------------------------------------------
 # Dò đổi tên: ghép cặp một dòng "mất" với một dòng "thêm"
 # ------------------------------------------------------------------
-RENAME_CELLS_RATIO = 0.7   # tỉ lệ ô giống nhau tối thiểu
-RENAME_LABEL_RATIO = 0.6   # độ giống của nhãn khi các ô khác trùng khớp
+RENAME_CELLS_RATIO = 0.7    # tỉ lệ ô giống nhau tối thiểu (tính trên mọi ô)
+RENAME_LABEL_RATIO = 0.6    # độ giống tối thiểu của nhãn
+RENAME_OTHERS_RATIO = 0.5   # tỉ lệ tối thiểu các ô ngoài nhãn còn trùng nhau
 
 
 def _cells_ratio(a: Dict[str, str], b: Dict[str, str]) -> float:
@@ -926,10 +927,11 @@ def match_renames(changes: List[Change]) -> List[Change]:
             ty_le_o = _cells_ratio(cu.cells, moi.cells)
             ty_le_nhan = SequenceMatcher(None, (cu.label or "").lower(),
                                          (moi.label or "").lower()).ratio()
-            khac_giong_het = _cells_ratio(_drop_label(cu.cells, cu.label),
-                                          _drop_label(moi.cells, moi.label)) == 1.0
+            ty_le_o_khac = _cells_ratio(_drop_label(cu.cells, cu.label),
+                                        _drop_label(moi.cells, moi.label))
             if ty_le_o >= RENAME_CELLS_RATIO or (
-                    ty_le_nhan >= RENAME_LABEL_RATIO and khac_giong_het):
+                    ty_le_nhan >= RENAME_LABEL_RATIO
+                    and ty_le_o_khac >= RENAME_OTHERS_RATIO):
                 ung_vien.append((max(ty_le_o, ty_le_nhan), cu, moi))
 
     ung_vien.sort(key=lambda x: x[0], reverse=True)

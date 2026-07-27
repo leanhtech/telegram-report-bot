@@ -136,8 +136,15 @@ Khoá trùng trong cùng một lần quét → gắn hậu tố `#2`, `#3` theo 
 **Dò đổi tên.** Sau khi tính tập "mất" (`removed`) và tập "thêm" (`added`), ghép cặp
 trong cùng một nguồn. Hai dòng là cùng một việc bị đổi tên khi:
 
-- các ô còn lại giống nhau ≥ **70%**, **hoặc**
-- nhãn giống nhau ≥ **60%** (`difflib.SequenceMatcher`) và các ô khác trùng khớp.
+- các ô giống nhau ≥ **70%**, **hoặc**
+- nhãn giống nhau ≥ **60%** (`difflib.SequenceMatcher`) **và** các ô ngoài nhãn còn
+  trùng nhau ≥ **50%**.
+
+> Ngưỡng thứ hai ban đầu đặt là "các ô khác trùng khớp hoàn toàn". Đã nới xuống 50% khi
+> triển khai: trường hợp rất hay gặp là người ta vừa sửa tên vừa dời hạn cùng lúc — luật
+> cũ sẽ báo thành một xoá + một thêm, đọc rối. Đánh đổi: sheet ít cột thì hai dòng có
+> nhãn na ná nhau có thể bị gộp nhầm; tin nhắn luôn hiện cả tên cũ lẫn tên mới nên nhìn
+> ra ngay.
 
 Ghép tham lam theo điểm cao nhất. Ghép được → báo `đổi tên: A → B` thay vì báo nhầm
 thành một xoá + một thêm.
