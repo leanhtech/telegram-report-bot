@@ -388,5 +388,44 @@ class TestLanQuetDauNgay(unittest.TestCase):
                                                  datetime(2026, 7, 27, 10, 20)))
 
 
+class TestMoTaCheDo(unittest.TestCase):
+    def test_valid_fields_dung_bang_khoa_cua_tu_dien(self):
+        # Dẫn xuất, không chép tay -> không bao giờ lệch với FIELD_ALIASES.
+        self.assertEqual(ct.VALID_FIELDS, frozenset(ct.FIELD_ALIASES))
+
+    def test_sheet_la_thi_generic_va_khong_nhan_ra_cot_nao(self):
+        mode, nhan_ra, tong = ct.describe_mode(GENERIC_HEADERS)
+        self.assertEqual(mode, "generic")
+        self.assertEqual(nhan_ra, 0)
+        self.assertEqual(tong, len(GENERIC_HEADERS))
+
+    def test_khai_du_columns_thi_len_che_do_task(self):
+        override = {"Nội dung triển khai": "name", "Bên liên quan": "assignee",
+                    "Ghi nhận": "status"}
+        mode, nhan_ra, tong = ct.describe_mode(GENERIC_HEADERS, override)
+        self.assertEqual(mode, "task")
+        self.assertEqual(nhan_ra, 3)
+        self.assertEqual(tong, len(GENERIC_HEADERS))
+
+    def test_thieu_ca_ten_viec_lan_cot_loi(self):
+        thieu = ct.missing_for_task(GENERIC_HEADERS)
+        self.assertIn("name", thieu)
+        self.assertTrue(any("thêm 2" in t for t in thieu), thieu)
+
+    def test_chi_con_thieu_mot_cot_loi(self):
+        override = {"Nội dung triển khai": "name", "Bên liên quan": "assignee"}
+        thieu = ct.missing_for_task(GENERIC_HEADERS, override)
+        self.assertNotIn("name", thieu)
+        self.assertTrue(any("thêm 1" in t for t in thieu), thieu)
+
+    def test_du_dieu_kien_thi_khong_thieu_gi(self):
+        self.assertEqual(ct.missing_for_task(TASK_HEADERS), [])
+
+    def test_khop_ten_cot_bo_qua_hoa_thuong_va_khoang_trang(self):
+        self.assertEqual(ct.match_column(GENERIC_HEADERS, "  bên LIÊN quan "),
+                         "Bên liên quan")
+        self.assertIsNone(ct.match_column(GENERIC_HEADERS, "Không có cột này"))
+
+
 if __name__ == "__main__":
     unittest.main()

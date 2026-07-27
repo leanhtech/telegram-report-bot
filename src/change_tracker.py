@@ -43,6 +43,13 @@ def _sha(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]
 
 
+# Điều kiện đủ để tin là bảng task: có tên việc + ít nhất 2 trong 3 trường lõi.
+# Đặt thành hằng số vì cả detect_mode lẫn missing_for_task đều dựa vào; hai chỗ
+# tự viết điều kiện riêng thì sửa một chỗ là lệch nhau, rất khó phát hiện.
+CORE_FIELDS = ("assignee", "due", "status")
+CORE_REQUIRED = 2
+
+
 def detect_mode(headers: List[str],
                 columns_override: Optional[Dict[str, str]] = None
                 ) -> Tuple[str, Dict[str, str]]:
@@ -71,8 +78,8 @@ def detect_mode(headers: List[str],
                 field_map[header] = name
 
     found = set(field_map.values())
-    core = found & {"assignee", "due", "status"}
-    mode = "task" if ("name" in found and len(core) >= 2) else "generic"
+    core = found & set(CORE_FIELDS)
+    mode = "task" if ("name" in found and len(core) >= CORE_REQUIRED) else "generic"
     return mode, field_map
 
 
@@ -431,3 +438,49 @@ def is_first_scan_of_day(last_scan_at: Optional[str], now: datetime) -> bool:
     except (ValueError, TypeError):
         return False
     return truoc.date() != now.date()
+
+
+# ------------------------------------------------------------------
+# Mô tả chế độ đọc của một sheet (phục vụ lệnh /nguon cot)
+# ------------------------------------------------------------------
+# Dẫn xuất từ FIELD_ALIASES để danh sách ý nghĩa hợp lệ không bao giờ lệch
+# với từ điển nhận diện cột.
+VALID_FIELDS = frozenset(FIELD_ALIASES)
+
+
+def match_column(headers: List[str], name: str) -> Optional[str]:
+    """Tên cột gốc khớp `name`, bỏ qua hoa/thường và khoảng trắng thừa.
+
+    Để người dùng gõ 'bên liên quan' vẫn khớp cột 'Bên liên quan'.
+    """
+    for header in headers:
+        if _norm(header) == _norm(name):
+            return header
+    return None
+
+
+def describe_mode(headers: List[str],
+                  columns_override: Optional[Dict[str, str]] = None
+                  ) -> Tuple[str, int, int]:
+    """(chế độ, số cột đã nhận ra ý nghĩa, tổng số cột)."""
+    mode, field_map = detect_mode(headers, columns_override)
+    return mode, len(field_map), len(headers)
+
+
+def missing_for_task(headers: List[str],
+                     columns_override: Optional[Dict[str, str]] = None
+                     ) -> List[str]:
+    """Những gì còn thiếu để sheet đủ điều kiện chạy chế độ 'task'.
+
+    Trả về danh sách rỗng nghĩa là đã đủ. Dùng để nói cho người dùng biết còn
+    phải khai thêm gì, thay vì để họ khai vài cột rồi không hiểu sao vẫn generic.
+    """
+    _mode, field_map = detect_mode(headers, columns_override)
+    found = set(field_map.values())
+    thieu: List[str] = []
+    if "name" not in found:
+        thieu.append("name")
+    con_thieu = CORE_REQUIRED - len(found & set(CORE_FIELDS))
+    if con_thieu > 0:
+        thieu.append("thêm %d trong {%s}" % (con_thieu, ", ".join(CORE_FIELDS)))
+    return thieu
