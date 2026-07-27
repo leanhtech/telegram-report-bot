@@ -519,6 +519,171 @@ async def cmd_moi(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     update.message.message_thread_id, parse_mode=ParseMode.HTML)
 
 
+NGUON_CU_PHAP = (
+    "Cú pháp:\n"
+    "/nguon\n"
+    "/nguon them <link> | Tên hiển thị | Tên tab\n"
+    "/nguon tab <id> [tên tab]\n"
+    "/nguon xoa <id>"
+)
+
+
+def _bo_anh_chup(state: dict, sid: str) -> None:
+    """Bỏ ảnh chụp cũ của một nguồn rồi lưu state.
+
+    Đổi tab / ánh xạ cột / cột khoá đều làm đổi cách sinh khoá định danh dòng,
+    nên ảnh chụp cũ không còn khớp. Không bỏ đi thì lần quét kế tiếp sẽ dội một
+    loạt thay đổi giả.
+    """
+    (state.get("sources") or {}).pop(sid, None)
+    state_store.save(watch_state_path(), state)
+
+
+async def _nguon_liet_ke(update: Update, sources: list, state: dict):
+    """Liệt kê các file đang theo dõi."""
+    if not sources:
+        await update.message.reply_text(
+            "Chưa theo dõi file nào.\n"
+            "Thêm: /nguon them <link Google Sheet>")
+        return
+    parts = ["Các file đang theo dõi:"]
+    for src in sources:
+        sid = str(src.get("id"))
+        info = (state.get("sources") or {}).get(sid) or {}
+        trang_thai = "LỖI: %s" % info["error"] if info.get("error") else "OK"
+        parts.append(
+            "- %s (%s)\n  tab: %s | chế độ: %s | %s dòng\n  quét lúc: %s | %s"
+            % (src.get("name") or sid, sid,
+               src.get("worksheet_name") or "(tab đầu tiên)",
+               info.get("mode") or "?", info.get("rows", "?"),
+               info.get("scanned_at") or "chưa quét", trang_thai))
+    parts.append("")
+    parts.append("Thêm: /nguon them <link> | Tên hiển thị | Tên tab")
+    await update.message.reply_text("\n".join(parts))
+
+
+async def _nguon_them(update: Update, sources: list, state: dict, args: list):
+    """Thêm một file sheet vào danh sách theo dõi."""
+    phan = " ".join(args[1:]).split("|")
+    sheet_id = _boc_spreadsheet_id(phan[0])
+    if not sheet_id:
+        await update.message.reply_text(
+            "Không nhận ra link/ID sheet. Dán nguyên link trên thanh địa chỉ.")
+        return
+    ten = phan[1].strip() if len(phan) > 1 and phan[1].strip() else ""
+    tab = phan[2].strip() if len(phan) > 2 and phan[2].strip() else ""
+
+    try:
+        tabs = sheets.list_worksheets(sheet_id)
+    except Exception as e:
+        await update.message.reply_text(
+            "Không mở được file: %s\n\n"
+            "Hãy chia sẻ file cho địa chỉ sau với quyền Viewer rồi thử lại:\n%s"
+            % (e, sheets.service_account_email() or "(chưa đọc được credentials)"))
+        return
+
+    if tab and tab not in tabs:
+        await update.message.reply_text(
+            "File không có tab “%s”. Các tab hiện có: %s" % (tab, ", ".join(tabs)))
+        return
+    if not tab:
+        mac_dinh = cfg.get("google_sheets.worksheet_name", "")
+        tab = mac_dinh if mac_dinh in tabs else (tabs[0] if tabs else "")
+
+    try:
+        headers, rows = sheets.fetch_rows(sheet_id, tab)
+    except Exception as e:
+        await update.message.reply_text("Đọc được file nhưng lỗi khi đọc tab: %s" % e)
+        return
+
+    ten = ten or tab or sheet_id[:8]
+    sid = _slug(ten)
+    dang_co = {str(s.get("id")) for s in sources}
+    goc, dem = sid, 2
+    while sid in dang_co:
+        sid, dem = "%s%d" % (goc, dem), dem + 1
+
+    mode, field_map = ct.detect_mode(headers)
+    snapshot = ct.build_snapshot(rows, headers, field_map, mode)
+
+    sources.append({"id": sid, "name": ten, "spreadsheet_id": sheet_id,
+                    "worksheet_name": tab})
+    cfg.set("watch.sources", sources)
+
+    # Chụp ảnh đầu tiên và KHÔNG báo gì — nếu không sẽ dội hàng trăm "dòng mới".
+    state.setdefault("sources", {})[sid] = {
+        "mode": mode, "headers": headers, "field_map": field_map,
+        "snapshot": snapshot, "scanned_at": now_dt().isoformat(),
+        "rows": len(snapshot), "error": None, "fail_count": 0,
+    }
+    state_store.save(watch_state_path(), state)
+
+    nhan_ra = sorted(set(field_map.values()))
+    parts = [
+        "Bắt đầu theo dõi “%s” (id: %s) — %d dòng." % (ten, sid, len(snapshot)),
+        "Tab: %s" % tab,
+        "Chế độ: %s (%d/%d cột nhận ra ý nghĩa)" % (mode, len(nhan_ra), len(headers)),
+        "Các cột trong sheet: %s" % ", ".join(headers),
+    ]
+    if mode == "generic":
+        parts.append("")
+        parts.append(
+            "Đang chạy chế độ bảng chung — bot báo theo tên cột nguyên văn. "
+            "Muốn báo giàu nghĩa hơn thì khai ánh xạ cột trong config.yaml "
+            "(watch.sources -> columns).")
+    parts.append("")
+    parts.append("Thay đổi từ giờ trở đi sẽ được báo.")
+    if not cfg.get("watch.enabled", False):
+        parts.append("Lưu ý: chức năng đang TẮT — bật bằng /theodoi bat")
+    await update.message.reply_text("\n".join(parts))
+
+
+async def _nguon_tab(update: Update, sources: list, state: dict, args: list):
+    """Xem hoặc đổi tab đang theo dõi của một nguồn."""
+    sid = args[1]
+    src = next((s for s in sources if str(s.get("id")) == sid), None)
+    if not src:
+        await update.message.reply_text("Không có nguồn id “%s”." % sid)
+        return
+    try:
+        tabs = sheets.list_worksheets(src.get("spreadsheet_id"))
+    except Exception as e:
+        await update.message.reply_text("Không mở được file: %s" % e)
+        return
+    if len(args) == 2:
+        await update.message.reply_text(
+            "Các tab của “%s”:\n- %s\n\nĐổi: /nguon tab %s <tên tab>"
+            % (src.get("name") or sid, "\n- ".join(tabs), sid))
+        return
+    tab_moi = " ".join(args[2:]).strip()
+    if tab_moi not in tabs:
+        await update.message.reply_text(
+            "Không có tab “%s”. Các tab hiện có: %s" % (tab_moi, ", ".join(tabs)))
+        return
+    src["worksheet_name"] = tab_moi
+    cfg.set("watch.sources", sources)
+    # Đổi tab = đổi dữ liệu hoàn toàn -> bỏ ảnh chụp cũ, chụp lại, không báo.
+    _bo_anh_chup(state, sid)
+    await update.message.reply_text(
+        "Đã đổi tab của “%s” sang “%s”. Sẽ chụp lại ảnh ở lần quét tới."
+        % (src.get("name") or sid, tab_moi))
+
+
+async def _nguon_xoa(update: Update, sources: list, state: dict, args: list):
+    """Bỏ theo dõi một nguồn."""
+    sid = args[1]
+    con_lai = [s for s in sources if str(s.get("id")) != sid]
+    if len(con_lai) == len(sources):
+        await update.message.reply_text("Không có nguồn id “%s”." % sid)
+        return
+    cfg.set("watch.sources", con_lai)
+    (state.get("sources") or {}).pop(sid, None)
+    state["pending"] = [p for p in (state.get("pending") or [])
+                        if p.get("source_id") != sid]
+    state_store.save(watch_state_path(), state)
+    await update.message.reply_text("Đã bỏ theo dõi nguồn “%s”." % sid)
+
+
 async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Quản lý danh sách file sheet đang được theo dõi (chỉ admin)."""
     if not is_admin(update):
@@ -529,160 +694,22 @@ async def cmd_nguon(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sources = list(cfg.get("watch.sources", []) or [])
     state = state_store.load(watch_state_path())
 
-    # --- Liệt kê ---
     if not args:
-        if not sources:
-            await update.message.reply_text(
-                "Chưa theo dõi file nào.\n"
-                "Thêm: /nguon them <link Google Sheet>")
-            return
-        parts = ["Các file đang theo dõi:"]
-        for src in sources:
-            sid = str(src.get("id"))
-            info = (state.get("sources") or {}).get(sid) or {}
-            trang_thai = "LỖI: %s" % info["error"] if info.get("error") else "OK"
-            parts.append(
-                "- %s (%s)\n  tab: %s | chế độ: %s | %s dòng\n  quét lúc: %s | %s"
-                % (src.get("name") or sid, sid,
-                   src.get("worksheet_name") or "(tab đầu tiên)",
-                   info.get("mode") or "?", info.get("rows", "?"),
-                   info.get("scanned_at") or "chưa quét", trang_thai))
-        parts.append("")
-        parts.append("Thêm: /nguon them <link> | Tên hiển thị | Tên tab")
-        await update.message.reply_text("\n".join(parts))
+        await _nguon_liet_ke(update, sources, state)
         return
 
     lenh = args[0].lower()
-
-    # --- Thêm nguồn ---
     if lenh == "them" and len(args) >= 2:
-        phan = " ".join(args[1:]).split("|")
-        sheet_id = _boc_spreadsheet_id(phan[0])
-        if not sheet_id:
-            await update.message.reply_text(
-                "Không nhận ra link/ID sheet. Dán nguyên link trên thanh địa chỉ.")
-            return
-        ten = phan[1].strip() if len(phan) > 1 and phan[1].strip() else ""
-        tab = phan[2].strip() if len(phan) > 2 and phan[2].strip() else ""
-
-        try:
-            tabs = sheets.list_worksheets(sheet_id)
-        except Exception as e:
-            await update.message.reply_text(
-                "Không mở được file: %s\n\n"
-                "Hãy chia sẻ file cho địa chỉ sau với quyền Viewer rồi thử lại:\n%s"
-                % (e, sheets.service_account_email() or "(chưa đọc được credentials)"))
-            return
-
-        if tab and tab not in tabs:
-            await update.message.reply_text(
-                "File không có tab “%s”. Các tab hiện có: %s" % (tab, ", ".join(tabs)))
-            return
-        if not tab:
-            mac_dinh = cfg.get("google_sheets.worksheet_name", "")
-            tab = mac_dinh if mac_dinh in tabs else (tabs[0] if tabs else "")
-
-        try:
-            headers, rows = sheets.fetch_rows(sheet_id, tab)
-        except Exception as e:
-            await update.message.reply_text("Đọc được file nhưng lỗi khi đọc tab: %s" % e)
-            return
-
-        ten = ten or tab or sheet_id[:8]
-        sid = _slug(ten)
-        dang_co = {str(s.get("id")) for s in sources}
-        goc, dem = sid, 2
-        while sid in dang_co:
-            sid, dem = "%s%d" % (goc, dem), dem + 1
-
-        mode, field_map = ct.detect_mode(headers)
-        snapshot = ct.build_snapshot(rows, headers, field_map, mode)
-
-        sources.append({"id": sid, "name": ten, "spreadsheet_id": sheet_id,
-                        "worksheet_name": tab})
-        cfg.set("watch.sources", sources)
-
-        # Chụp ảnh đầu tiên và KHÔNG báo gì — nếu không sẽ dội hàng trăm "dòng mới".
-        state.setdefault("sources", {})[sid] = {
-            "mode": mode, "headers": headers, "field_map": field_map,
-            "snapshot": snapshot, "scanned_at": now_dt().isoformat(),
-            "rows": len(snapshot), "error": None, "fail_count": 0,
-        }
-        state_store.save(watch_state_path(), state)
-
-        nhan_ra = sorted(set(field_map.values()))
-        parts = [
-            "Bắt đầu theo dõi “%s” (id: %s) — %d dòng." % (ten, sid, len(snapshot)),
-            "Tab: %s" % tab,
-            "Chế độ: %s (%d/%d cột nhận ra ý nghĩa)" % (mode, len(nhan_ra), len(headers)),
-            "Các cột trong sheet: %s" % ", ".join(headers),
-        ]
-        if mode == "generic":
-            parts.append("")
-            parts.append(
-                "Đang chạy chế độ bảng chung — bot báo theo tên cột nguyên văn. "
-                "Muốn báo giàu nghĩa hơn thì khai ánh xạ cột trong config.yaml "
-                "(watch.sources -> columns).")
-        parts.append("")
-        parts.append("Thay đổi từ giờ trở đi sẽ được báo.")
-        if not cfg.get("watch.enabled", False):
-            parts.append("Lưu ý: chức năng đang TẮT — bật bằng /theodoi bat")
-        await update.message.reply_text("\n".join(parts))
+        await _nguon_them(update, sources, state, args)
         return
-
-    # --- Xem / đổi tab ---
     if lenh == "tab" and len(args) >= 2:
-        sid = args[1]
-        src = next((s for s in sources if str(s.get("id")) == sid), None)
-        if not src:
-            await update.message.reply_text("Không có nguồn id “%s”." % sid)
-            return
-        try:
-            tabs = sheets.list_worksheets(src.get("spreadsheet_id"))
-        except Exception as e:
-            await update.message.reply_text("Không mở được file: %s" % e)
-            return
-        if len(args) == 2:
-            await update.message.reply_text(
-                "Các tab của “%s”:\n- %s\n\nĐổi: /nguon tab %s <tên tab>"
-                % (src.get("name") or sid, "\n- ".join(tabs), sid))
-            return
-        tab_moi = " ".join(args[2:]).strip()
-        if tab_moi not in tabs:
-            await update.message.reply_text(
-                "Không có tab “%s”. Các tab hiện có: %s" % (tab_moi, ", ".join(tabs)))
-            return
-        src["worksheet_name"] = tab_moi
-        cfg.set("watch.sources", sources)
-        # Đổi tab = đổi dữ liệu hoàn toàn -> bỏ ảnh chụp cũ, chụp lại, không báo.
-        (state.get("sources") or {}).pop(sid, None)
-        state_store.save(watch_state_path(), state)
-        await update.message.reply_text(
-            "Đã đổi tab của “%s” sang “%s”. Sẽ chụp lại ảnh ở lần quét tới."
-            % (src.get("name") or sid, tab_moi))
+        await _nguon_tab(update, sources, state, args)
         return
-
-    # --- Xoá nguồn ---
     if lenh == "xoa" and len(args) >= 2:
-        sid = args[1]
-        con_lai = [s for s in sources if str(s.get("id")) != sid]
-        if len(con_lai) == len(sources):
-            await update.message.reply_text("Không có nguồn id “%s”." % sid)
-            return
-        cfg.set("watch.sources", con_lai)
-        (state.get("sources") or {}).pop(sid, None)
-        state["pending"] = [p for p in (state.get("pending") or [])
-                            if p.get("source_id") != sid]
-        state_store.save(watch_state_path(), state)
-        await update.message.reply_text("Đã bỏ theo dõi nguồn “%s”." % sid)
+        await _nguon_xoa(update, sources, state, args)
         return
 
-    await update.message.reply_text(
-        "Cú pháp:\n"
-        "/nguon\n"
-        "/nguon them <link> | Tên hiển thị | Tên tab\n"
-        "/nguon tab <id> [tên tab]\n"
-        "/nguon xoa <id>")
+    await update.message.reply_text(NGUON_CU_PHAP)
 
 
 async def cmd_theodoi(update: Update, context: ContextTypes.DEFAULT_TYPE):
