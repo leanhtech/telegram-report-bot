@@ -116,6 +116,9 @@ sheet, chế độ hiện tại, phần còn thiếu, và nhắc cú pháp.
   cột đã nhận ra ý nghĩa, tổng số cột)`.
 - `missing_for_task(headers, columns_override=None) -> list[str]` — các phần còn thiếu để
   đủ điều kiện chế độ `task`; rỗng nghĩa là đã đủ.
+- `match_column(headers, name) -> str|None` — tên cột gốc khớp `name`, bỏ qua hoa/thường
+  và khoảng trắng thừa. Đây là chỗ duy nhất thực hiện việc so khớp tên cột, để `bot.py`
+  không phải chạm vào hàm nội bộ `_norm`.
 
 **Phần chạm Telegram/sheet ở lại `bot.py`.**
 
@@ -143,6 +146,8 @@ Tự động (`python -m unittest discover -s tests -t .`), bổ sung vào
    `{assignee, due, status}`.
 5. `missing_for_task` khi chỉ thiếu 1 trong 3 cột lõi → nêu đúng "thêm 1".
 6. `missing_for_task` khi đã đủ điều kiện → trả rỗng.
+7. `match_column` khớp được tên cột viết khác hoa/thường và thừa khoảng trắng; tên không
+   có trong sheet → `None`.
 
 Phần lệnh chạm `telegram`/`gspread` không test tự động được (máy dev không cài) → giữ quy
 ước hiện có: `python -m py_compile src/*.py` + script stub trong scratchpad. Việc tách
@@ -157,5 +162,5 @@ nguyên từng dòng logic.
 - Khai sai tên cột hoặc sai ý nghĩa đều bị từ chối kèm gợi ý đúng, và **không** ghi vào
   config.
 - Trả lời cho biết chế độ trước → sau và phần còn thiếu.
-- `python -m unittest discover -s tests -t .` xanh (71 → 77 test).
+- `python -m unittest discover -s tests -t .` xanh (71 → 78 test).
 - Bốn nhánh `/nguon` cũ hoạt động y như trước khi tách hàm.
