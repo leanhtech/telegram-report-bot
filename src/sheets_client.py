@@ -8,10 +8,11 @@ Trạng thái thực hiện | Ghi chú
 """
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -32,6 +33,44 @@ def _col_letter(n: int) -> str:
         n, r = divmod(n - 1, 26)
         s = chr(65 + r) + s
     return s
+
+
+def _col_index(letters: str) -> int:
+    """Chữ cái cột A1 -> số cột (1-based): A->1, Z->26, AA->27."""
+    n = 0
+    for ch in letters.upper():
+        n = n * 26 + (ord(ch) - 64)
+    return n
+
+
+def _resolve_extra_columns(headers: List[str]):
+    """Đọc cấu hình `google_sheets.extra_columns` -> [(chỉ số cột, nhãn)].
+
+    Cấu hình là dict {khóa: nhãn}. Khóa nhận diện cột theo:
+    - tên header (khớp không phân biệt hoa/thường), hoặc
+    - chữ cái cột A1 ('A', 'B', 'AA'...) nếu không trùng header nào.
+    Nhãn rỗng/None -> bỏ qua (dùng để gỡ ánh xạ qua /cauhinh set ... null).
+    """
+    mapping = cfg.get("google_sheets.extra_columns") or {}
+    if not isinstance(mapping, dict):
+        return []
+    resolved = []
+    for key, label in mapping.items():
+        if not label:
+            continue
+        k = str(key).strip()
+        idx = None
+        if k.lower() in headers:                       # ưu tiên khớp tên header
+            idx = headers.index(k.lower())
+        elif re.fullmatch(r"[A-Za-z]{1,3}", k):        # rồi tới chữ cái cột
+            ci = _col_index(k) - 1
+            if 0 <= ci < len(headers):
+                idx = ci
+        if idx is None:
+            log.warning("extra_columns: không tìm được cột cho khóa %r", key)
+            continue
+        resolved.append((idx, str(label)))
+    return resolved
 
 
 def parse_date(value: str) -> Optional[date]:
@@ -60,6 +99,8 @@ class Task:
     done_date: Optional[date] = None  # Ngày hoàn thành
     status: str = ""          # Trạng thái thực hiện
     note: str = ""
+    # Cột tùy ý do người dùng khai báo (google_sheets.extra_columns): {nhãn: giá trị}
+    extra: Dict[str, str] = field(default_factory=dict)
 
     @property
     def is_done(self) -> bool:
@@ -147,6 +188,7 @@ class SheetsClient:
             return []
 
         headers = [h.strip().lower() for h in rows[0]]
+        extra_cols = _resolve_extra_columns(headers)
         tasks: List[Task] = []
         for row in rows[1:]:
             if not any(cell.strip() for cell in row):
@@ -161,6 +203,10 @@ class SheetsClient:
                     setattr(t, attr, parse_date(value))
                 else:
                     setattr(t, attr, value)
+            for ci, label in extra_cols:               # cột tùy ý -> t.extra[nhãn]
+                value = row[ci].strip() if ci < len(row) else ""
+                if value:
+                    t.extra[label] = value
             if t.name:
                 tasks.append(t)
 

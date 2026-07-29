@@ -429,6 +429,9 @@ Lệnh cấu hình (chỉ admin):
   Bỏ gửi riêng: /cauhinh set schedules.team_report.kiosk_chat_id null
   Khai báo nhân sự cho /tai (khi không đọc được dropdown):
   VD: /cauhinh set team.members Thái, Nam, Lan, Hùng
+  Gán ý nghĩa cột tùy ý (hiện trong chi tiết /tiendo) — theo chữ cái cột hoặc tên header:
+  VD: /cauhinh set google_sheets.extra_columns.A Tác nhân thứ ba
+  Gỡ ánh xạ: /cauhinh set google_sheets.extra_columns.A null
 /chatid - Hiện chat_id và topic_id của cuộc trò chuyện hiện tại
 /nguon - Các file sheet kế hoạch đang được theo dõi
 /nguon them <link> | Tên hiển thị | Tên tab - Thêm file để theo dõi thay đổi
@@ -1052,6 +1055,10 @@ async def cmd_cauhinh(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Nhân sự (fallback team.members): "
             + (", ".join(map(str, members)) if members else "(trống — đang dùng dropdown)")
         )
+        extra = cfg.get("google_sheets.extra_columns") or {}
+        if extra:
+            cols = ", ".join(f"{k} → {v}" for k, v in extra.items() if v)
+            parts.append(f"Cột tùy ý (extra_columns): {cols or '(trống)'}")
         parts.append("")
         parts.append("Đổi cấu hình: /cauhinh set <khóa> <giá trị>")
         await update.message.reply_text("\n".join(parts))
@@ -1075,6 +1082,12 @@ async def cmd_cauhinh(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif key == "team.members":
             sheets.fetch_team_members(force=True)  # nạp lại danh sách nhân sự
             note = f"\nĐã nạp {len(value)} nhân sự cho /tai."
+        elif key.startswith("google_sheets."):
+            try:
+                sheets.fetch_tasks(force=True)     # đọc lại để áp cột mới ngay
+                note = "\nĐã đọc lại dữ liệu sheet."
+            except Exception as e:
+                note = f"\n(Chưa đọc lại được sheet: {e})"
         await update.message.reply_text(f"Đã cập nhật {key} = {value}{note}")
         return
 

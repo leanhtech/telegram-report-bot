@@ -12,6 +12,10 @@ google_sheets:
   spreadsheet_id: "PUT-YOUR-SPREADSHEET-ID-HERE"   # đoạn giữa /d/ và /edit trên URL sheet
   worksheet_name: Task Đã Điều Phối
   credentials_file: credentials.json         # key service account (tự tạo, không commit)
+  # Gán ý nghĩa cho cột tùy ý -> hiện trong chi tiết /tiendo. Khóa là chữ cái cột
+  # ('A','B','AA'...) hoặc tên header trong sheet; giá trị là nhãn hiển thị.
+  # Thêm nhanh qua Telegram: /cauhinh set google_sheets.extra_columns.A Tác nhân thứ ba
+  extra_columns: {}
 
 timezone: Asia/Ho_Chi_Minh
 

@@ -599,6 +599,8 @@ def search_progress(keyword: str, limit: int = 8) -> str:
             parts.append(f"✅ Hoàn thành: {_fmt(t.done_date)}")
         if t.jira:
             parts.append(f"🔗 Info liên quan: {t.jira}")
+        for label, value in t.extra.items():           # cột tùy ý (extra_columns)
+            parts.append(f"🔖 {label}: {value}")
         if t.note:
             parts.append("📝 Tiến độ thực hiện:")
             parts.append(_format_note(t.note))

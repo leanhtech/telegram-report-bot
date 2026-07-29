@@ -92,6 +92,13 @@ và **thiếu Thứ 6**. Đừng lặp lại.
 project, assignee, est, created, due, done_date, status, note`. Các cột ngày parse qua
 `parse_date` (`DATE_FIELDS`).
 
+**Cột tùy ý (`google_sheets.extra_columns`)** — ngoài các cột gán cứng ở trên, admin có
+thể gán ý nghĩa cho cột bất kỳ qua config: dict `{khóa: nhãn}`, khóa là **chữ cái cột**
+(`A`, `B`, `AA`... ưu tiên khớp tên header trước rồi mới tới chữ cái) và nhãn là tên hiển
+thị. `_resolve_extra_columns` phân giải khóa → chỉ số cột lúc đọc sheet; giá trị nạp vào
+`Task.extra` ({nhãn: giá trị}) và hiển thị trong chi tiết `/tiendo` (dòng `🔖 nhãn: giá
+trị`). Thêm nhanh trên Telegram: `/cauhinh set google_sheets.extra_columns.A Tác nhân thứ ba`.
+
 Trạng thái (dựa trên chuỗi `status`):
 - `is_done` = status chứa "hoàn thành".
 - `is_planned` = status chứa "dự tính" hoặc "chưa giao" (task **dự tính giao**, thường

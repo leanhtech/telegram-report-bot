@@ -104,6 +104,14 @@ _Cập nhật gần nhất: 2026-07-26._
     **Vì sao nhớ:** cả hai đều vô hình với test đơn vị (chỉ tồn tại ở `bot.py` — phần
     không test tự động được) và chỉ lộ ra khi nhìn toàn hệ thống. Đừng gộp ngược về cờ chung.
 
+11. **Cột tùy ý cho sheet báo cáo (`google_sheets.extra_columns`).** Trước đây `HEADER_MAP`
+    gán cứng ý nghĩa cột. Nay admin gán ý nghĩa cho cột bất kỳ: dict `{khóa: nhãn}`, khóa
+    theo **tên header** hoặc **chữ cái cột** (`A`, `B`...). Giá trị nạp vào `Task.extra`,
+    hiển thị ở chi tiết `/tiendo` (dòng `🔖 nhãn: giá trị`). Thêm nhanh qua Telegram:
+    `/cauhinh set google_sheets.extra_columns.A Tác nhân thứ ba` (đổi `google_sheets.*` thì
+    cmd_cauhinh ép `fetch_tasks(force=True)` để áp ngay). **Khác** với `/nguon cot` của
+    watch: cái này cho sheet "Task Đã Điều Phối" (báo cáo), `/nguon cot` cho sheet kế hoạch.
+
 ## Bẫy đã biết (đừng vấp lại)
 
 - **Ngày PTB `0=Chủ Nhật`** (mục 1). Dùng `[1..5]` = T2–T6.
