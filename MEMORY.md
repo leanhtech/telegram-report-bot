@@ -112,6 +112,19 @@ _Cập nhật gần nhất: 2026-07-26._
     cmd_cauhinh ép `fetch_tasks(force=True)` để áp ngay). **Khác** với `/nguon cot` của
     watch: cái này cho sheet "Task Đã Điều Phối" (báo cáo), `/nguon cot` cho sheet kế hoạch.
 
+12. **Bản tin gom so với MỐC BẢN TIN TRƯỚC, không dồn per-scan.** Trước đây mỗi lần quét
+    (10') diff với ảnh chụp ngay trước rồi `state["pending"].extend(...)`; digest gửi cả
+    hàng chờ → một dòng bị sửa nhiều lần trong ngày hiện nhiều dòng (spam trùng lặp). Nay
+    mỗi nguồn lưu `digest_base` (ảnh chụp tại bản tin gần nhất); digest = `diff_snapshots(
+    digest_base, ảnh_chụp_hiện_tại)` → **một thay đổi ròng/dòng** (hạn 20/07→25/07 gộp làm
+    một). `_changes_since_digest(state)` dùng chung cho `job_watch_digest` (gửi xong mới
+    dời `digest_base` về hiện tại) và `/moi` (chỉ xem, không dời mốc). Lần quét giữ nguyên
+    vai trò **báo ngay** real-time. `pending` bỏ dùng (state_store vẫn giữ field, dọn = []).
+    Hệ quả: đích nhận cả instant + digest sẽ thấy mục instant lặp lại trong bản tin ròng
+    (không còn trừ qua `instant_sent` vì change tính lại từ snapshot) — chấp nhận được vì
+    bản tin giờ là "ảnh ròng kể từ báo cáo trước". State cũ thiếu `digest_base` tự lành:
+    lần quét kế đặt `digest_base = hiện tại`, digest sau chỉ báo phần phát sinh từ đó.
+
 ## Bẫy đã biết (đừng vấp lại)
 
 - **Ngày PTB `0=Chủ Nhật`** (mục 1). Dùng `[1..5]` = T2–T6.
@@ -123,8 +136,9 @@ _Cập nhật gần nhất: 2026-07-26._
 - **`watch.active_days` cũng theo quy ước `0 = Chủ Nhật`** như `schedules.*`.
 - **Mất thư mục `state/`** (quên mount) → bot chụp lại từ đầu và im lặng, không dội tin —
   đúng thiết kế, đừng "sửa".
-- **Bản tin gom tính theo TỪNG đích** (`ct.for_digest`), không được lọc chung bằng
-  `instant_sent` trước vòng lặp đích — xem mục 10.
+- **Bản tin gom nay tính từ `digest_base` (mốc bản tin trước), không dùng `pending`** —
+  xem mục 12. `ct.for_digest` vẫn còn nhưng với change tính lại từ snapshot luôn trả
+  `(tất cả, 0)`; đừng khôi phục kiểu dồn `pending` per-scan (gây spam trùng lặp, mục 12).
 
 ## Việc mở / đề xuất tiếp theo
 

@@ -160,7 +160,14 @@ def _scan_source(src: dict, state: dict, now):
             "snapshot": snapshot, "scanned_at": now.isoformat(),
             "rows": len(snapshot), "error": truoc.get("error"),
             "fail_count": truoc.get("fail_count", 0),
+            # Mốc so sánh của bản tin gom = ảnh chụp tại bản tin trước. Chỉ job
+            # digest mới dời mốc này; các lần quét chỉ mang nó theo, không đổi.
+            "digest_base": truoc.get("digest_base"),
         }
+        if not hien_tai["digest_base"]:   # lần đầu (hoặc state cũ) -> mốc = hiện tại
+            hien_tai["digest_base"] = {
+                "headers": headers, "field_map": field_map, "snapshot": snapshot,
+            }
 
         changes = []
         if truoc.get("snapshot"):
@@ -302,7 +309,9 @@ async def job_watch_scan(context: ContextTypes.DEFAULT_TYPE):
             for ch in ngay:
                 ch.instant_sent = False
 
-    state.setdefault("pending", []).extend(c.to_dict() for c in moi)
+    # Không tích luỹ per-scan vào pending nữa: bản tin gom được tính lại bằng
+    # cách so ảnh chụp hiện tại với mốc bản tin trước (tránh trùng lặp khi một
+    # dòng bị sửa qua nhiều lần quét trong ngày).
     state["last_scan_at"] = now.isoformat()
     state_store.save(watch_state_path(), state)
 
@@ -320,25 +329,48 @@ def _mo_ta_tu_luc(last_digest_at, now) -> str:
     return "Từ %s" % truoc.strftime("%H:%M %d/%m")
 
 
-async def job_watch_digest(context: ContextTypes.DEFAULT_TYPE):
-    """Gom các thay đổi đang chờ thành bản tin, riêng cho từng đích.
+def _changes_since_digest(state: dict) -> list:
+    """Thay đổi RÒNG của mỗi nguồn so với mốc bản tin trước (digest_base).
 
-    Truyền NGUYÊN hàng chờ (kể cả các mục đã báo ngay) cho _send_watch — mỗi
-    đích tự quyết định qua ct.for_digest cần thấy phần nào: đích chỉ nhận bản
-    tin phải thấy TẤT CẢ, đích có nhận báo ngay chỉ cần thấy phần chưa báo.
+    So ảnh chụp hiện tại với ảnh chụp tại lần gửi bản tin gần nhất, nên một dòng
+    bị sửa nhiều lần trong ngày chỉ hiện MỘT thay đổi ròng (không trùng lặp).
+    Không làm thay đổi `state` — việc dời mốc do job digest thực hiện sau khi gửi.
+    """
+    cho = []
+    for sid, cur in (state.get("sources") or {}).items():
+        if not (cur or {}).get("snapshot"):
+            continue
+        base = cur.get("digest_base") or {}
+        if base.get("snapshot") is not None:
+            cho.extend(ct.match_renames(ct.diff_snapshots(base, cur, sid)))
+    return cho
+
+
+async def job_watch_digest(context: ContextTypes.DEFAULT_TYPE):
+    """Bản tin gom: so ảnh chụp hiện tại với mốc bản tin TRƯỚC, không dồn per-scan.
+
+    Nhờ vậy mỗi dòng chỉ xuất hiện một lần với thay đổi ròng kể từ bản tin trước,
+    thay vì lặp lại theo từng lần quét (nguyên nhân spam trùng lặp trước đây).
     """
     if not cfg.get("watch.enabled", False):
         return
     now = now_dt()
     state = state_store.load(watch_state_path())
-    cho = [ct.Change.from_dict(d) for d in (state.get("pending") or [])]
+    cho = _changes_since_digest(state)
 
     if cho:
         await _send_watch(context, "digest", cho, _field_maps(state), now,
                           _mo_ta_tu_luc(state.get("last_digest_at"), now))
-        log.info("Đã gửi bản tin thay đổi (%d mục đang chờ)", len(cho))
+        log.info("Đã gửi bản tin thay đổi (%d thay đổi ròng so bản tin trước)", len(cho))
 
-    state["pending"] = []
+    # Dời mốc so sánh của mọi nguồn về ảnh chụp hiện tại (thời điểm bản tin này).
+    for cur in (state.get("sources") or {}).values():
+        if (cur or {}).get("snapshot") is not None:
+            cur["digest_base"] = {
+                "headers": cur.get("headers"), "field_map": cur.get("field_map"),
+                "snapshot": cur.get("snapshot"),
+            }
+    state["pending"] = []          # không còn dùng; dọn cho gọn
     state["last_digest_at"] = now.isoformat()
     state_store.save(watch_state_path(), state)
 
@@ -501,10 +533,10 @@ async def cmd_tai(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_moi(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Xem các thay đổi kể từ bản tin gần nhất (không xoá hàng chờ)."""
+    """Xem các thay đổi ròng kể từ bản tin gần nhất (không dời mốc so sánh)."""
     now = now_dt()
     state = state_store.load(watch_state_path())
-    cho = [ct.Change.from_dict(d) for d in (state.get("pending") or [])]
+    cho = _changes_since_digest(state)
     if not cho:
         moc = state.get("last_digest_at")
         khi = ""
