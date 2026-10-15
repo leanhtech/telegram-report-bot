@@ -4,6 +4,8 @@ name: deploy-k8s-ez
 on:
   push:
     branches: [main]
+permissions:
+  contents: read
 concurrency:
   group: deploy-report-bot
   cancel-in-progress: false
@@ -14,11 +16,11 @@ jobs:
     env:
       SHA: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           path: telegram-report-bot
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: leanhtech/k8s-ez
           ref: main
