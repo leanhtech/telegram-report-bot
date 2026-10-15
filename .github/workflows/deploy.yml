@@ -1,0 +1,33 @@
+# Sinh bởi k8s-ez (./ez ci render report-bot) — sửa ở k8s-ez/scripts/ci.sh rồi ./ez ci setup.
+# Chạy trên runner tự host của k8s-ez (laptop): build image → commit newTag vào k8s-ez → Argo CD deploy.
+name: deploy-k8s-ez
+on:
+  push:
+    branches: [main]
+concurrency:
+  group: deploy-report-bot
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.repository_owner == 'leanhtech'
+    runs-on: [self-hosted, k8s-ez]
+    env:
+      SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: telegram-report-bot
+      - uses: actions/checkout@v4
+        with:
+          repository: leanhtech/k8s-ez
+          ref: main
+          path: k8s-ez
+          ssh-key: ${{ secrets.K8S_EZ_DEPLOY_KEY }}
+      - name: bỏ qua nếu main đã có commit mới hơn
+        id: current
+        run: bash k8s-ez/scripts/ci.sh current telegram-report-bot "$SHA" && echo "ok=1" >> "$GITHUB_OUTPUT" || echo "ok=0" >> "$GITHUB_OUTPUT"
+      - if: steps.current.outputs.ok == '1'
+        run: bash k8s-ez/ez build report-bot
+      - if: steps.current.outputs.ok == '1'
+        run: bash k8s-ez/scripts/ci.sh commit report-bot "$SHA"
