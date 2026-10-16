@@ -1,5 +1,5 @@
 # Sinh bởi k8s-ez (./ez ci render report-bot) — sửa ở k8s-ez/scripts/ci.sh rồi ./ez ci setup.
-# Chạy trên runner tự host của k8s-ez (laptop): build image → commit newTag vào k8s-ez → Argo CD deploy.
+# Chạy trên runner tự host của k8s-ez (laptop): build → quét image → commit newTag → Argo CD deploy.
 name: deploy-k8s-ez
 on:
   push:
@@ -31,5 +31,7 @@ jobs:
         run: bash k8s-ez/scripts/ci.sh current telegram-report-bot "$SHA" && echo "ok=1" >> "$GITHUB_OUTPUT" || echo "ok=0" >> "$GITHUB_OUTPUT"
       - if: steps.current.outputs.ok == '1'
         run: bash k8s-ez/ez build report-bot
+      - if: steps.current.outputs.ok == '1'
+        run: bash k8s-ez/ez scan report-bot
       - if: steps.current.outputs.ok == '1'
         run: bash k8s-ez/scripts/ci.sh commit report-bot "$SHA"
