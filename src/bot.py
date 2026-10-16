@@ -19,11 +19,10 @@ from . import change_reporter as cr
 from . import change_tracker as ct
 from . import report_generator as rg
 from . import state_store
+from .log_setup import setup_logging
 from .sheets_client import sheets
 
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO
-)
+setup_logging()
 log = logging.getLogger("report-bot")
 
 MAX_LEN = 4000  # Telegram giới hạn 4096 ký tự / tin nhắn
